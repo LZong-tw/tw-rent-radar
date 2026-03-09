@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.0",
     "ruff>=0.4",
     "pre-commit>=3.0",
 ]
@@ -39,3 +40,7 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests that hit real websites (deselect with '-m not e2e')",
+]
+addopts = "-m 'not e2e'"

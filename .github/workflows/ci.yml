@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,3 +30,21 @@ jobs:
 
       - name: Test
         run: pytest -v
+
+  e2e:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          playwright install chromium --with-deps
+
+      - name: E2E smoke tests
+        run: pytest -m e2e -v --timeout=120

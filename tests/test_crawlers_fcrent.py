@@ -58,7 +58,7 @@ def _make_html(next_data: dict | None = None) -> str:
     body = "<html><head>"
     if next_data is not None:
         payload = json.dumps(next_data, ensure_ascii=False)
-        body += f'<script id="__NEXT_DATA__" type="application/json">' f"{payload}</script>"
+        body += f'<script id="__NEXT_DATA__" type="application/json">{payload}</script>'
     body += "</head><body></body></html>"
     return body
 
