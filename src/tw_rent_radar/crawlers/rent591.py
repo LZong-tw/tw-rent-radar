@@ -1,4 +1,4 @@
-"""591 rental listing crawler using Playwright for CSRF and API calls."""
+"""591 rental listing crawler using Playwright to extract SSR data from Nuxt."""
 
 from __future__ import annotations
 
@@ -37,18 +37,53 @@ REGION_MAP = {
     "基隆市": 2,
 }
 
+# JavaScript snippet to extract listing data from the Nuxt SSR payload.
+# The site stores Pinia state in window.__NUXT__.pinia['rent-list'].
+_EXTRACT_LISTINGS_JS = """() => {
+    const n = window.__NUXT__;
+    if (!n || !n.pinia || !n.pinia['rent-list']) return null;
+    const store = n.pinia['rent-list'];
+    const raw = store.dataList && store.dataList._value;
+    const items = raw || store.dataList || [];
+    if (!Array.isArray(items)) return null;
+
+    // Serialize each item, avoiding circular references
+    return items.map(item => {
+        const safe = {};
+        for (const [k, v] of Object.entries(item)) {
+            if (v === null || v === undefined) {
+                safe[k] = v;
+            } else if (Array.isArray(v)) {
+                safe[k] = v.map(x => typeof x === 'object' ? JSON.parse(JSON.stringify(x)) : x);
+            } else if (typeof v === 'object') {
+                try { safe[k] = JSON.parse(JSON.stringify(v)); } catch(e) { safe[k] = null; }
+            } else {
+                safe[k] = v;
+            }
+        }
+        return safe;
+    });
+}"""
+
 
 class Rent591Crawler(BaseCrawler):
-    """Crawler for 591 rental listings (rent.591.com.tw)."""
+    """Crawler for 591 rental listings (rent.591.com.tw).
+
+    The 591 site is a Nuxt 3 SSR application.  Listing data is rendered
+    server-side and embedded in the Pinia store at
+    ``window.__NUXT__.pinia['rent-list'].dataList``.  Pagination is handled
+    by navigating to ``/list?region=<id>&page=<n>``.
+    """
 
     source_name = "591"
-    list_url = "https://rent.591.com.tw/home/search/rsList"
+    list_base_url = "https://rent.591.com.tw/list"
 
     def parse_price(self, price_str: str) -> int | None:
-        """Parse price string like '15,000 元/月' to int. Return None for '面議'.
+        """Parse price string like '15,000' or '15,000 元/月' to int. Return None for '面議'.
 
         Handles formats:
           - "15,000 元/月" -> 15000
+          - "22,000" -> 22000
           - "8000" -> 8000
           - "含管理費 12,500 元/月" -> 12500
           - "面議" -> None
@@ -56,31 +91,57 @@ class Rent591Crawler(BaseCrawler):
         if not price_str or "面議" in str(price_str):
             return None
         # Find all digit groups (possibly separated by commas)
-        # We want the last number-like sequence in the string
         matches = re.findall(r"[\d,]+", str(price_str))
         if not matches:
             return None
         # Use the last numeric match (handles "含管理費 12,500 元/月")
-        raw = matches[-1] if len(matches) == 1 else matches[-1]
-        # For "含管理費 12,500 元/月", matches would be ["12", "500"]
-        # but with our regex [\d,]+ it captures "12,500" as one match
+        raw = matches[-1]
         return int(raw.replace(",", ""))
 
     def parse_list_item(self, item: dict, city: str) -> dict:
-        """Normalize a single listing from 591 API response to Listing schema.
+        """Normalize a single listing from 591 Nuxt SSR data to Listing schema.
 
-        Maps 591 API fields to the Listing model fields.
+        Supports both the current Nuxt SSR field names and the legacy API
+        field names so that existing unit tests and any transitional data
+        continue to work.
         """
-        source_id = str(item.get("post_id") or item.get("cases_id", ""))
+        # Source ID: current API uses 'id', legacy used 'post_id' / 'cases_id'
+        source_id = str(item.get("id") or item.get("post_id") or item.get("cases_id", ""))
+
         price_str = str(item.get("price", ""))
         price = self.parse_price(price_str)
 
-        # Area can be a string like "30" or a number
+        # Area: current API has numeric 'area' and string 'area_name' (e.g. "20坪")
         area_raw = item.get("area", "")
         try:
-            size = float(str(area_raw)) if area_raw else None
+            size = float(str(area_raw).replace("坪", "")) if area_raw else None
         except (ValueError, TypeError):
             size = None
+
+        # District: current API embeds district in 'address' as "楠梓區-大學南路"
+        # Legacy used 'section_name'.
+        district = item.get("section_name", "")
+        address = item.get("address", "") or item.get("location", "")
+        if not district and address and "-" in address:
+            # Extract district from "楠梓區-大學南路" style address
+            district = address.split("-")[0].strip()
+
+        # Rooms: current API uses 'layoutStr' (e.g. "3房2廳"), legacy used 'room'
+        rooms = item.get("layoutStr") or (str(item["room"]) if item.get("room") else None)
+
+        # Floor: current uses 'floor_name', legacy used 'floor_str'
+        floor = item.get("floor_name", "") or item.get("floor_str", "")
+
+        # Contact: current uses 'role_name', legacy used 'contact'
+        contact = item.get("role_name", "") or item.get("contact", "")
+
+        # URL: current API provides full URL, legacy needed construction
+        url = item.get("url", "")
+        if not url:
+            url = f"https://rent.591.com.tw/{source_id}"
+
+        # Images: current uses 'photoList', legacy used 'photo_list'
+        photo_list = item.get("photoList") or item.get("photo_list", [])
 
         return {
             "source": self.source_name,
@@ -88,23 +149,23 @@ class Rent591Crawler(BaseCrawler):
             "title": item.get("title", ""),
             "price": price,
             "city": city,
-            "district": item.get("section_name", ""),
-            "address": item.get("address", "") or item.get("location", ""),
+            "district": district,
+            "address": address,
             "size": size,
-            "rooms": str(item.get("room", "")) if item.get("room") else None,
+            "rooms": rooms,
             "type": item.get("kind_name", ""),
-            "floor": item.get("floor_str", ""),
-            "contact": item.get("contact", ""),
+            "floor": floor,
+            "contact": contact,
             "phone": item.get("phone", ""),
-            "url": f"https://rent.591.com.tw/rent-detail-{source_id}.html",
-            "images": json.dumps(item.get("photo_list", []), ensure_ascii=False),
-            "description": item.get("cases_name", ""),
+            "url": url,
+            "images": json.dumps(photo_list, ensure_ascii=False),
+            "description": item.get("community_name", "") or item.get("cases_name", ""),
             "amenities": None,
             "raw_data": json.dumps(item, ensure_ascii=False),
         }
 
     async def crawl(self, **filters) -> list[dict]:
-        """Crawl 591 listings using Playwright for CSRF and API calls.
+        """Crawl 591 listings by navigating the Nuxt SSR list pages.
 
         Keyword arguments:
             city: str -- City name in Chinese (default: "台北市")
@@ -120,7 +181,7 @@ class Rent591Crawler(BaseCrawler):
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context()
 
-            # 1. Set region cookie
+            # Set region cookie so the site defaults to the target city
             await context.add_cookies(
                 [
                     {
@@ -134,69 +195,31 @@ class Rent591Crawler(BaseCrawler):
 
             page = await context.new_page()
 
-            # 2. Visit rent.591.com.tw to get CSRF token
-            await page.goto("https://rent.591.com.tw/", wait_until="domcontentloaded")
-            csrf_token = await page.evaluate(
-                "() => {"
-                "  const meta = document.querySelector('meta[name=\"csrf-token\"]');"
-                "  return meta ? meta.getAttribute('content') : '';"
-                "}"
-            )
-            logger.info("CSRF token obtained: %s...", csrf_token[:10] if csrf_token else "empty")
+            for page_num in range(1, max_pages + 1):
+                list_url = f"{self.list_base_url}?region={region_id}"
+                if page_num > 1:
+                    list_url += f"&page={page_num}"
 
-            # 3. Loop through pages
-            for page_num in range(max_pages):
-                offset = page_num * 30
-                api_url = (
-                    f"{self.list_url}?is_new_list=1&type=1"
-                    f"&region={region_id}&firstRow={offset}&totalRows=0"
-                )
-
-                logger.info("Fetching page %d (offset=%d)", page_num + 1, offset)
-
-                # 4. Fetch list API with CSRF header via page.evaluate(fetch)
-                response_text = await page.evaluate(
-                    """(url) => {
-                        return fetch(url, {
-                            headers: {
-                                'X-CSRF-TOKEN': '"""
-                    + csrf_token
-                    + """',
-                                'X-Requested-With': 'XMLHttpRequest'
-                            },
-                            credentials: 'include'
-                        })
-                        .then(r => r.text())
-                        .catch(e => JSON.stringify({error: e.message}));
-                    }""",
-                    api_url,
-                )
+                logger.info("Fetching page %d: %s", page_num, list_url)
 
                 try:
-                    data = json.loads(response_text)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse API response on page %d", page_num + 1)
+                    await page.goto(list_url, wait_until="networkidle", timeout=30000)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Page load failed for page %d", page_num)
                     break
 
-                if "data" not in data:
-                    logger.warning(
-                        "No data in API response on page %d: %s",
-                        page_num + 1,
-                        str(data)[:200],
-                    )
-                    break
+                # Extract listing data from the Nuxt SSR payload
+                items = await page.evaluate(_EXTRACT_LISTINGS_JS)
 
-                items = data["data"].get("data", [])
                 if not items:
-                    logger.info("No more items found on page %d", page_num + 1)
+                    logger.info("No more items found on page %d", page_num)
                     break
 
-                # 5. Parse each item
                 for item in items:
                     parsed = self.parse_list_item(item, city)
                     results.append(parsed)
 
-                logger.info("Parsed %d items from page %d", len(items), page_num + 1)
+                logger.info("Parsed %d items from page %d", len(items), page_num)
 
             await browser.close()
 

@@ -64,11 +64,11 @@ class TestFcrentE2E:
 
 @pytest.mark.e2e
 class TestRent591E2E:
-    """Verify 591 crawler parsing works against live API structure."""
+    """Verify 591 crawler parsing works against live SSR data."""
 
     @pytest.mark.asyncio
-    async def test_list_api_returns_data(self):
-        """591 listing API should return JSON with data."""
+    async def test_list_page_returns_data(self):
+        """591 Nuxt SSR list page should contain listing data in __NUXT__ payload."""
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context()
@@ -86,44 +86,60 @@ class TestRent591E2E:
             )
 
             page = await context.new_page()
-            await page.goto("https://rent.591.com.tw/", wait_until="networkidle", timeout=30000)
+            await page.goto(
+                "https://rent.591.com.tw/list?region=17",
+                wait_until="networkidle",
+                timeout=30000,
+            )
 
-            # Try fetching the list API
-            response = await page.evaluate("""async () => {
-                const csrf = document.querySelector(
-                    'meta[name="csrf-token"]'
-                )?.content || '';
-                const res = await fetch(
-                    'https://rent.591.com.tw/home/search/rsList'
-                    + '?is_new_list=1&type=1&kind=0&region=17&firstRow=0',
-                    { headers: { 'X-CSRF-TOKEN': csrf } }
-                );
-                const text = await res.text();
-                try {
-                    return JSON.parse(text);
-                } catch (e) {
-                    return { _raw: text.slice(0, 500), _status: res.status };
-                }
+            # Extract listing data from the Nuxt SSR payload
+            items = await page.evaluate("""() => {
+                const n = window.__NUXT__;
+                if (!n || !n.pinia || !n.pinia['rent-list']) return null;
+                const store = n.pinia['rent-list'];
+                const raw = store.dataList && store.dataList._value;
+                const items = raw || store.dataList || [];
+                if (!Array.isArray(items)) return null;
+                return items.map(item => {
+                    const safe = {};
+                    for (const [k, v] of Object.entries(item)) {
+                        if (v === null || v === undefined) {
+                            safe[k] = v;
+                        } else if (Array.isArray(v)) {
+                            safe[k] = v.map(
+                                x => typeof x === 'object'
+                                    ? JSON.parse(JSON.stringify(x)) : x
+                            );
+                        } else if (typeof v === 'object') {
+                            try {
+                                safe[k] = JSON.parse(JSON.stringify(v));
+                            } catch(e) { safe[k] = null; }
+                        } else {
+                            safe[k] = v;
+                        }
+                    }
+                    return safe;
+                });
             }""")
             await browser.close()
 
         # Verify structure
-        assert (
-            "data" in response
-        ), f"API response should have 'data' key, got: {response.get('_raw', response)!r}"
-        data = response["data"]
-        assert "data" in data, "data should contain nested 'data' with listings"
+        assert items is not None, "Nuxt payload should contain listing data"
+        assert len(items) > 0, "Should have at least 1 listing item"
 
-        items = data["data"]
-        if len(items) > 0:
-            # Verify at least the first item has expected fields
-            item = items[0]
-            from tw_rent_radar.crawlers.rent591 import Rent591Crawler
+        # Verify first item has expected fields and parses correctly
+        item = items[0]
+        assert "id" in item, f"Item should have 'id' field, got keys: {list(item.keys())}"
+        assert "title" in item, "Item should have 'title' field"
+        assert "price" in item, "Item should have 'price' field"
 
-            crawler = Rent591Crawler()
-            parsed = crawler.parse_list_item(item, city="高雄市")
-            assert parsed["source"] == "591"
-            assert parsed["source_id"], "should have a source_id"
+        from tw_rent_radar.crawlers.rent591 import Rent591Crawler
+
+        crawler = Rent591Crawler()
+        parsed = crawler.parse_list_item(item, city="高雄市")
+        assert parsed["source"] == "591"
+        assert parsed["source_id"], "should have a source_id"
+        assert parsed["title"], "should have a title"
 
 
 @pytest.mark.e2e

@@ -14,7 +14,31 @@ def crawler():
 
 @pytest.fixture
 def sample_item():
-    """A realistic 591 API listing item."""
+    """A realistic 591 listing item in the current Nuxt SSR format."""
+    return {
+        "id": 12345678,
+        "title": "近捷運三房公寓 生活機能佳",
+        "price": "15,000",
+        "price_unit": "元/月",
+        "kind_name": "整層住家",
+        "area": 30,
+        "area_name": "30坪",
+        "layoutStr": "3房2廳",
+        "floor_name": "3F/7F",
+        "role_name": "王先生",
+        "address": "三民區-建國路100號",
+        "photoList": ["https://img.591.com.tw/1.jpg"],
+        "community_name": "優質三房公寓出租",
+        "url": "https://rent.591.com.tw/12345678",
+        "sectionid": 42,
+        "regionid": 17,
+        "cover": "https://img.591.com.tw/cover.jpg",
+    }
+
+
+@pytest.fixture
+def legacy_item():
+    """A 591 listing item in the old API format (for backward compatibility)."""
     return {
         "post_id": 12345678,
         "title": "近捷運三房公寓 生活機能佳",
@@ -45,22 +69,32 @@ class TestParseListItem:
         assert result["district"] == "三民區"
         assert result["type"] == "整層住家"
         assert result["size"] == 30.0
+        assert result["rooms"] == "3房2廳"
+        assert result["floor"] == "3F/7F"
+        assert result["url"] == "https://rent.591.com.tw/12345678"
+        assert result["contact"] == "王先生"
+        assert result["address"] == "三民區-建國路100號"
+
+    def test_legacy_item(self, crawler, legacy_item):
+        """Parser should handle legacy API field names (post_id, section_name, etc.)."""
+        result = crawler.parse_list_item(legacy_item, "高雄市")
+
+        assert result["source_id"] == "12345678"
+        assert result["district"] == "三民區"
         assert result["rooms"] == "3"
         assert result["floor"] == "3F/7F"
-        assert result["url"] == "https://rent.591.com.tw/rent-detail-12345678.html"
         assert result["contact"] == "王先生"
         assert result["phone"] == "0912-345-678"
-        assert result["address"] == "三民區建國路100號"
 
-    def test_cases_id_fallback(self, crawler):
-        """When post_id is absent, cases_id should be used as source_id."""
-        item = {"cases_id": 99999, "price": "8000", "area": "20"}
-        result = crawler.parse_list_item(item, "台北市")
-        assert result["source_id"] == "99999"
+    def test_id_fallback_chain(self, crawler):
+        """source_id should try 'id', then 'post_id', then 'cases_id'."""
+        assert crawler.parse_list_item({"id": 1}, "台北市")["source_id"] == "1"
+        assert crawler.parse_list_item({"post_id": 2}, "台北市")["source_id"] == "2"
+        assert crawler.parse_list_item({"cases_id": 3}, "台北市")["source_id"] == "3"
 
     def test_missing_optional_fields(self, crawler):
         """Missing optional fields should result in empty strings or None."""
-        item = {"post_id": 111, "price": "面議"}
+        item = {"id": 111, "price": "面議"}
         result = crawler.parse_list_item(item, "台北市")
         assert result["source_id"] == "111"
         assert result["price"] is None
@@ -69,9 +103,21 @@ class TestParseListItem:
 
     def test_area_as_float(self, crawler):
         """Area with decimal should parse to float."""
-        item = {"post_id": 222, "price": "10,000 元/月", "area": "25.5"}
+        item = {"id": 222, "price": "10,000", "area": "25.5"}
         result = crawler.parse_list_item(item, "台北市")
         assert result["size"] == 25.5
+
+    def test_area_numeric(self, crawler):
+        """Area as a plain number (current API format) should parse to float."""
+        item = {"id": 333, "price": "8,000", "area": 20}
+        result = crawler.parse_list_item(item, "台北市")
+        assert result["size"] == 20.0
+
+    def test_district_from_address(self, crawler):
+        """When section_name is absent, district should be extracted from address."""
+        item = {"id": 444, "address": "楠梓區-大學南路"}
+        result = crawler.parse_list_item(item, "高雄市")
+        assert result["district"] == "楠梓區"
 
     def test_raw_data_preserved(self, crawler, sample_item):
         """raw_data should contain the original item JSON."""
@@ -79,7 +125,7 @@ class TestParseListItem:
 
         result = crawler.parse_list_item(sample_item, "高雄市")
         raw = json.loads(result["raw_data"])
-        assert raw["post_id"] == 12345678
+        assert raw["id"] == 12345678
         assert raw["title"] == "近捷運三房公寓 生活機能佳"
 
     def test_images_serialized(self, crawler, sample_item):
@@ -89,6 +135,12 @@ class TestParseListItem:
         result = crawler.parse_list_item(sample_item, "高雄市")
         images = json.loads(result["images"])
         assert images == ["https://img.591.com.tw/1.jpg"]
+
+    def test_url_fallback(self, crawler):
+        """When 'url' is not in item, it should be constructed from source_id."""
+        item = {"id": 555}
+        result = crawler.parse_list_item(item, "台北市")
+        assert result["url"] == "https://rent.591.com.tw/555"
 
 
 class TestParsePrice:
@@ -116,13 +168,17 @@ class TestParsePrice:
     def test_no_comma(self, crawler):
         assert crawler.parse_price("5000 元/月") == 5000
 
+    def test_bare_comma_number(self, crawler):
+        """Current API format: price is just '22,000' without unit."""
+        assert crawler.parse_price("22,000") == 22000
+
 
 class TestCrawlerAttributes:
     def test_source_name(self, crawler):
         assert crawler.source_name == "591"
 
-    def test_list_url(self, crawler):
-        assert crawler.list_url == "https://rent.591.com.tw/home/search/rsList"
+    def test_list_base_url(self, crawler):
+        assert crawler.list_base_url == "https://rent.591.com.tw/list"
 
     def test_is_base_crawler_subclass(self, crawler):
         from tw_rent_radar.crawlers.base import BaseCrawler
