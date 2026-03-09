@@ -154,7 +154,7 @@ def show(listing_id: int, as_json: bool, db_path: str):
     create_tables(engine)
 
     with Session(engine) as session:
-        listing = session.query(Listing).get(listing_id)
+        listing = session.get(Listing, listing_id)
         if listing is None:
             click.echo(f"Listing {listing_id} not found.")
             return
