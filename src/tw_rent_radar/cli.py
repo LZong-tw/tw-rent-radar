@@ -8,6 +8,9 @@ import click
 from rich.console import Console
 from sqlalchemy.orm import Session
 
+from tw_rent_radar.crawlers import (
+    FcrentCrawler, Rent591Crawler, RakuyaCrawler, FbGroupCrawler, FbMarketCrawler,
+)
 from tw_rent_radar.db import Listing, create_tables, get_engine, upsert_listing
 from tw_rent_radar.output import format_json, format_table
 
@@ -19,32 +22,42 @@ SOURCES = {
     "fb_market": "Facebook Marketplace",
 }
 
-# Maps source key to crawler class. Populated as crawlers are implemented.
-CRAWLER_MAP: dict = {}
+# Maps source key to crawler class.
+CRAWLER_MAP: dict = {
+    "591": Rent591Crawler,
+    "rakuya": RakuyaCrawler,
+    "fcrent": FcrentCrawler,
+    "fb_group": FbGroupCrawler,
+    "fb_market": FbMarketCrawler,
+}
 
 DEFAULT_DB = "radar.db"
 
 console = Console()
 
 
-def run_crawler(source: str, db_path: str, **filters) -> None:
+def run_crawler(source: str, db_path: str | None, **filters) -> int:
     """Dispatch to crawler class, crawl, and upsert results into the DB."""
     crawler_cls = CRAWLER_MAP.get(source)
     if crawler_cls is None:
-        console.print(
-            f"[yellow]Warning:[/yellow] Crawler for '{source}' is not implemented yet."
-        )
-        return
+        console.print(f"[yellow]Crawler for '{source}' not yet implemented.[/yellow]")
+        return 0
 
     crawler = crawler_cls()
-    results = asyncio.run(crawler.crawl(**filters))
+    listings = asyncio.run(crawler.crawl(**filters))
 
     engine = get_engine(db_path)
     create_tables(engine)
+
+    count = 0
     with Session(engine) as session:
-        for item in results:
+        for item in listings:
             upsert_listing(session, **item)
-    console.print(f"[green]Saved {len(results)} listings from {source}.[/green]")
+            count += 1
+        session.commit()
+
+    console.print(f"[green]Saved {count} listings from {source}.[/green]")
+    return count
 
 
 @click.group()
@@ -56,19 +69,22 @@ def cli():
 
 @cli.command()
 @click.argument("source", type=click.Choice(list(SOURCES.keys()) + ["all"]))
-@click.option("--city", default=None, help="Filter by city.")
-@click.option("--group", default=None, help="Facebook group URL (for fb_group source).")
-@click.option("--db", "db_path", default=DEFAULT_DB, hidden=True)
-def crawl(source: str, city: str | None, group: str | None, db_path: str):
-    """Crawl rental listings from SOURCE."""
-    sources = list(SOURCES.keys()) if source == "all" else [source]
+@click.option("--city", help="縣市，例如 高雄市")
+@click.option("--group", help="Facebook 社團名稱")
+@click.option("--db", "db_path", default=None, hidden=True)
+def crawl(source, city, group, db_path):
+    """爬取租屋資料"""
     filters = {}
     if city:
         filters["city"] = city
     if group:
         filters["group"] = group
-    for src in sources:
-        run_crawler(src, db_path, **filters)
+
+    if source == "all":
+        for src in CRAWLER_MAP:
+            run_crawler(src, db_path, **filters)
+    else:
+        run_crawler(source, db_path, **filters)
 
 
 @cli.command()
