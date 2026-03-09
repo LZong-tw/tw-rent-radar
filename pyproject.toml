@@ -12,6 +12,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "rich>=13.0",
     "playwright>=1.40",
+    "playwright-stealth>=1.0",
 ]
 
 [project.optional-dependencies]
