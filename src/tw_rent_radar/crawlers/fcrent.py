@@ -15,6 +15,14 @@ _NEXT_DATA_RE = re.compile(
     re.DOTALL,
 )
 
+# Pattern to strip HTML tags when extracting plain text from rich content.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _build_lookup(items: list[dict]) -> dict[str, str]:
+    """Build id -> zhTW name lookup from a reference table."""
+    return {item["id"]: item.get("name", {}).get("zhTW", "") for item in items}
+
 
 class FcrentCrawler(BaseCrawler):
     """Crawl rental listings from fcrent.tw."""
@@ -29,6 +37,10 @@ class FcrentCrawler(BaseCrawler):
     def parse_listing_page(self, html: str) -> dict | None:
         """Extract listing data from the ``__NEXT_DATA__`` script tag.
 
+        The real fcrent.tw __NEXT_DATA__ stores opaque IDs on the listing
+        object and provides lookup tables in ``pageProps`` to resolve them
+        to human-readable names.
+
         Returns a normalized dict matching the :class:`Listing` schema, or
         *None* if the expected data is not present.
         """
@@ -41,29 +53,97 @@ class FcrentCrawler(BaseCrawler):
         except (json.JSONDecodeError, TypeError):
             return None
 
-        obj = next_data.get("props", {}).get("pageProps", {}).get("object")
+        page_props = next_data.get("props", {}).get("pageProps", {})
+        obj = page_props.get("object")
         if obj is None:
             return None
 
-        source_id = obj.get("id", "")
+        # The listing ID lives in query, not on the object itself.
+        source_id = next_data.get("query", {}).get("id", "")
+
+        # Build lookups from the reference tables in pageProps.
+        city_lookup = _build_lookup(page_props.get("city", []))
+        district_lookup = _build_lookup(page_props.get("district", []))
+        type_lookup = _build_lookup(page_props.get("type", []))
+        layout_lookup = _build_lookup(page_props.get("layout", []))
+        facility_lookup = _build_lookup(page_props.get("facilities", []))
+        others_lookup = _build_lookup(page_props.get("others", []))
+
+        # Resolve coordinator to contact name and phone.
+        coordinator_id = obj.get("coordinator", "")
+        coordinators = page_props.get("coordinators", [])
+        coordinator = next((c for c in coordinators if c.get("id") == coordinator_id), {})
+        contact = coordinator.get("name", {}).get("zhTW")
+        phone = coordinator.get("phone")
+
+        # Resolve city and district names from opaque IDs.
+        city_name = city_lookup.get(obj.get("city", ""))
+        district_name = district_lookup.get(obj.get("district", ""))
+
+        # Parse description from rich-text contents blocks.
+        contents = obj.get("contents", {}).get("zhTW", [])
+        description = ""
+        if isinstance(contents, list):
+            parts: list[str] = []
+            for block in contents:
+                if isinstance(block, dict):
+                    html_content = block.get("data", {}).get("html", "")
+                    if html_content:
+                        parts.append(_HTML_TAG_RE.sub("", html_content))
+            description = "\n".join(parts)
+
+        # Resolve amenities from facility IDs.
+        amenities = [facility_lookup.get(fid, fid) for fid in obj.get("facility", [])]
+
+        # Resolve "others" features and append to description.
+        other_features = [others_lookup.get(oid, oid) for oid in obj.get("others", [])]
+        if other_features:
+            if description:
+                description += "\n" + ", ".join(other_features)
+            else:
+                description = ", ".join(other_features)
+
+        # Prefer layout name (e.g. "獨立套房") over building type.
+        type_name = type_lookup.get(obj.get("type", ""))
+        layout_name = layout_lookup.get(obj.get("layout", ""))
+        listing_type = layout_name or type_name
+
+        # Parse price (stored as string on the real site).
+        price = None
+        rent_str = obj.get("rent", "")
+        if rent_str:
+            try:
+                price = int(rent_str)
+            except (ValueError, TypeError):
+                pass
+
+        # Parse size in ping (stored as string on the real site).
+        size = None
+        ping_str = obj.get("ping", "")
+        if ping_str:
+            try:
+                size = float(ping_str)
+            except (ValueError, TypeError):
+                pass
+
         return {
             "source": self.source_name,
-            "source_id": str(source_id),
-            "title": obj.get("title"),
-            "price": obj.get("price"),
-            "city": obj.get("city"),
-            "district": obj.get("district"),
-            "address": obj.get("address"),
-            "size": obj.get("size"),
-            "rooms": obj.get("rooms"),
-            "type": obj.get("type"),
+            "source_id": source_id,
+            "title": obj.get("name", {}).get("zhTW"),
+            "price": price,
+            "city": city_name,
+            "district": district_name,
+            "address": (f"{city_name}{district_name}" if city_name and district_name else None),
+            "size": size,
+            "rooms": obj.get("pattern"),
+            "type": listing_type,
             "floor": obj.get("floor"),
-            "contact": obj.get("contact"),
-            "phone": obj.get("phone"),
+            "contact": contact,
+            "phone": phone,
             "url": f"{self.base_url}/object/{source_id}",
-            "images": json.dumps(obj.get("images", []), ensure_ascii=False),
-            "description": obj.get("description"),
-            "amenities": json.dumps(obj.get("amenities", []), ensure_ascii=False),
+            "images": json.dumps(obj.get("picture", []), ensure_ascii=False),
+            "description": description or None,
+            "amenities": json.dumps(amenities, ensure_ascii=False),
             "raw_data": json.dumps(obj, ensure_ascii=False),
         }
 
