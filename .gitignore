@@ -128,3 +128,7 @@ dmypy.json
 .envrc
 
 # End of https://www.gitignore.io/api/python
+
+# tw-rent-radar
+radar.db
+fb_session/

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tw-rent-radar"
+version = "0.1.0"
+description = "Multi-platform Taiwan rental listing CLI tool"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "sqlalchemy>=2.0",
+    "rich>=13.0",
+    "playwright>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+tw-rent-radar = "tw_rent_radar.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
