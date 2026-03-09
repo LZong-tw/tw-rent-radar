@@ -1,4 +1,5 @@
 """591 rental listing crawler using Playwright for CSRF and API calls."""
+
 from __future__ import annotations
 
 import json
@@ -12,11 +13,27 @@ from tw_rent_radar.crawlers.base import BaseCrawler
 logger = logging.getLogger(__name__)
 
 REGION_MAP = {
-    "台北市": 1, "新北市": 3, "桃園市": 6, "新竹市": 4, "新竹縣": 5,
-    "苗栗縣": 21, "台中市": 8, "彰化縣": 10, "南投縣": 11,
-    "雲林縣": 12, "嘉義市": 13, "嘉義縣": 14, "台南市": 15,
-    "高雄市": 17, "屏東縣": 19, "宜蘭縣": 22, "花蓮縣": 23,
-    "台東縣": 24, "澎湖縣": 25, "金門縣": 26, "連江縣": 27,
+    "台北市": 1,
+    "新北市": 3,
+    "桃園市": 6,
+    "新竹市": 4,
+    "新竹縣": 5,
+    "苗栗縣": 21,
+    "台中市": 8,
+    "彰化縣": 10,
+    "南投縣": 11,
+    "雲林縣": 12,
+    "嘉義市": 13,
+    "嘉義縣": 14,
+    "台南市": 15,
+    "高雄市": 17,
+    "屏東縣": 19,
+    "宜蘭縣": 22,
+    "花蓮縣": 23,
+    "台東縣": 24,
+    "澎湖縣": 25,
+    "金門縣": 26,
+    "連江縣": 27,
     "基隆市": 2,
 }
 
@@ -104,14 +121,16 @@ class Rent591Crawler(BaseCrawler):
             context = await browser.new_context()
 
             # 1. Set region cookie
-            await context.add_cookies([
-                {
-                    "name": "urlJumpIp",
-                    "value": str(region_id),
-                    "domain": ".591.com.tw",
-                    "path": "/",
-                }
-            ])
+            await context.add_cookies(
+                [
+                    {
+                        "name": "urlJumpIp",
+                        "value": str(region_id),
+                        "domain": ".591.com.tw",
+                        "path": "/",
+                    }
+                ]
+            )
 
             page = await context.new_page()
 
@@ -128,7 +147,10 @@ class Rent591Crawler(BaseCrawler):
             # 3. Loop through pages
             for page_num in range(max_pages):
                 offset = page_num * 30
-                api_url = f"{self.list_url}?is_new_list=1&type=1&region={region_id}&firstRow={offset}&totalRows=0"
+                api_url = (
+                    f"{self.list_url}?is_new_list=1&type=1"
+                    f"&region={region_id}&firstRow={offset}&totalRows=0"
+                )
 
                 logger.info("Fetching page %d (offset=%d)", page_num + 1, offset)
 
@@ -157,7 +179,11 @@ class Rent591Crawler(BaseCrawler):
                     break
 
                 if "data" not in data:
-                    logger.warning("No data in API response on page %d: %s", page_num + 1, str(data)[:200])
+                    logger.warning(
+                        "No data in API response on page %d: %s",
+                        page_num + 1,
+                        str(data)[:200],
+                    )
                     break
 
                 items = data["data"].get("data", [])

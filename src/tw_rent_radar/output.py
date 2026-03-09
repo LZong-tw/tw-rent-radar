@@ -1,4 +1,5 @@
 """Output formatting: JSON and Rich table."""
+
 from __future__ import annotations
 
 import json
@@ -15,9 +16,7 @@ def format_json(listings: list[dict], fields: list[str] | None = None) -> str:
     return json.dumps(listings, ensure_ascii=False, indent=2, default=str)
 
 
-def format_table(
-    listings: list[dict], columns: list[str] | None = None
-) -> str:
+def format_table(listings: list[dict], columns: list[str] | None = None) -> str:
     """Format listings as a Rich table rendered to a string."""
     if not listings:
         return ""

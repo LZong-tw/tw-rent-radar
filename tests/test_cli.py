@@ -1,4 +1,5 @@
 """Tests for the CLI skeleton."""
+
 import pytest
 from click.testing import CliRunner
 

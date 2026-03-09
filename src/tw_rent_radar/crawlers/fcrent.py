@@ -1,4 +1,5 @@
 """Crawler for fcrent.tw — a Next.js SSR rental listing site."""
+
 from __future__ import annotations
 
 import json
@@ -40,12 +41,7 @@ class FcrentCrawler(BaseCrawler):
         except (json.JSONDecodeError, TypeError):
             return None
 
-        obj = (
-            next_data
-            .get("props", {})
-            .get("pageProps", {})
-            .get("object")
-        )
+        obj = next_data.get("props", {}).get("pageProps", {}).get("object")
         if obj is None:
             return None
 

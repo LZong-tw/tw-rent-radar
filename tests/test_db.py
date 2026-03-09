@@ -1,6 +1,5 @@
 """Tests for the database layer."""
-import pytest
-from sqlalchemy import create_engine
+
 from sqlalchemy.orm import Session
 
 from tw_rent_radar.db import Listing, create_tables, get_engine, upsert_listing

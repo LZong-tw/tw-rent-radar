@@ -1,4 +1,5 @@
 """Tests for the output layer."""
+
 import json
 
 from tw_rent_radar.output import format_json, format_table

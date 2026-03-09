@@ -1,4 +1,5 @@
 """SQLite database layer with SQLAlchemy ORM."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +12,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+)
+from sqlalchemy import (
     create_engine as _create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -22,9 +25,7 @@ class Base(DeclarativeBase):
 
 class Listing(Base):
     __tablename__ = "listings"
-    __table_args__ = (
-        UniqueConstraint("source", "source_id", name="uq_source_source_id"),
-    )
+    __table_args__ = (UniqueConstraint("source", "source_id", name="uq_source_source_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -56,9 +57,7 @@ class Listing(Base):
 
     def to_dict(self, fields: list[str] | None = None) -> dict:
         """Convert listing to dict, JSON-parsing images and amenities."""
-        all_fields = {
-            c.name: getattr(self, c.name) for c in self.__table__.columns
-        }
+        all_fields = {c.name: getattr(self, c.name) for c in self.__table__.columns}
         # Parse JSON fields
         for key in ("images", "amenities"):
             val = all_fields.get(key)
@@ -87,11 +86,7 @@ def upsert_listing(session: Session, **data) -> Listing:
     source = data.get("source")
     source_id = data.get("source_id")
 
-    existing = (
-        session.query(Listing)
-        .filter_by(source=source, source_id=source_id)
-        .first()
-    )
+    existing = session.query(Listing).filter_by(source=source, source_id=source_id).first()
 
     if existing:
         for key, value in data.items():

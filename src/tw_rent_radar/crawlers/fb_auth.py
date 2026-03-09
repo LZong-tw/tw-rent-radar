@@ -2,6 +2,7 @@
 
 Saves browser state to fb_session/ so subsequent crawls reuse the login.
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -1,4 +1,5 @@
 """Tests for the crawler base class."""
+
 import pytest
 
 from tw_rent_radar.crawlers.base import BaseCrawler

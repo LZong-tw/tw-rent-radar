@@ -1,4 +1,5 @@
 """Tests for the 591 rental crawler with mock data."""
+
 from __future__ import annotations
 
 import pytest
@@ -125,6 +126,7 @@ class TestCrawlerAttributes:
 
     def test_is_base_crawler_subclass(self, crawler):
         from tw_rent_radar.crawlers.base import BaseCrawler
+
         assert isinstance(crawler, BaseCrawler)
 
 

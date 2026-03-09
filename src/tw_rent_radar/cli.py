@@ -1,4 +1,5 @@
 """CLI entry point using Click."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +10,11 @@ from rich.console import Console
 from sqlalchemy.orm import Session
 
 from tw_rent_radar.crawlers import (
-    FcrentCrawler, Rent591Crawler, RakuyaCrawler, FbGroupCrawler, FbMarketCrawler,
+    FbGroupCrawler,
+    FbMarketCrawler,
+    FcrentCrawler,
+    RakuyaCrawler,
+    Rent591Crawler,
 )
 from tw_rent_radar.db import Listing, create_tables, get_engine, upsert_listing
 from tw_rent_radar.output import format_json, format_table
@@ -133,7 +138,7 @@ def search(
 
         listings = query.all()
         field_list = fields.split(",") if fields else None
-        dicts = [l.to_dict(field_list) for l in listings]
+        dicts = [item.to_dict(field_list) for item in listings]
 
     if as_json:
         click.echo(format_json(dicts, fields=field_list))

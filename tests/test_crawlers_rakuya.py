@@ -1,4 +1,5 @@
 """Tests for the Rakuya crawler."""
+
 import json
 
 import pytest

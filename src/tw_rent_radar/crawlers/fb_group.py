@@ -1,4 +1,5 @@
 """Facebook Group crawler for rental listings."""
+
 from __future__ import annotations
 
 import re

@@ -1,8 +1,9 @@
 import json
 
 from click.testing import CliRunner
+
 from tw_rent_radar.cli import cli
-from tw_rent_radar.db import get_engine, create_tables, Session, upsert_listing
+from tw_rent_radar.db import Session, create_tables, get_engine, upsert_listing
 
 
 def test_full_workflow(tmp_path):
@@ -12,22 +13,40 @@ def test_full_workflow(tmp_path):
     create_tables(engine)
 
     with Session(engine) as session:
-        upsert_listing(session,
-            source="591", source_id="111", title="三民區套房",
-            price=8000, city="高雄市", district="三民區",
-            rooms="1房", type="套房",
+        upsert_listing(
+            session,
+            source="591",
+            source_id="111",
+            title="三民區套房",
+            price=8000,
+            city="高雄市",
+            district="三民區",
+            rooms="1房",
+            type="套房",
             url="https://rent.591.com.tw/111",
         )
-        upsert_listing(session,
-            source="fcrent", source_id="aaa", title="苓雅兩房",
-            price=16000, city="高雄市", district="苓雅區",
-            rooms="2房1廳", type="整層住家",
+        upsert_listing(
+            session,
+            source="fcrent",
+            source_id="aaa",
+            title="苓雅兩房",
+            price=16000,
+            city="高雄市",
+            district="苓雅區",
+            rooms="2房1廳",
+            type="整層住家",
             url="https://fcrent.tw/object/aaa",
         )
-        upsert_listing(session,
-            source="591", source_id="222", title="台北套房",
-            price=12000, city="台北市", district="大安區",
-            rooms="1房", type="套房",
+        upsert_listing(
+            session,
+            source="591",
+            source_id="222",
+            title="台北套房",
+            price=12000,
+            city="台北市",
+            district="大安區",
+            rooms="1房",
+            type="套房",
             url="https://rent.591.com.tw/222",
         )
         session.commit()

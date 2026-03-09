@@ -1,4 +1,5 @@
 """Rakuya (樂屋網) rental listing crawler using Playwright."""
+
 from __future__ import annotations
 
 import json
@@ -112,7 +113,7 @@ class RakuyaCrawler(BaseCrawler):
         do a live inspection of the rendered page.
         """
         city: str | None = filters.get("city")
-        max_pages: int = int(filters.get("max_pages", 1))
+        max_pages: int = int(filters.get("max_pages", 1))  # noqa: F841
 
         url = self.search_url
         if city and city in self.CITY_CODES:

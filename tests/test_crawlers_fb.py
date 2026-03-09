@@ -1,4 +1,5 @@
 """Tests for Facebook crawlers (group + marketplace) and auth utilities."""
+
 from __future__ import annotations
 
 import pytest
@@ -6,10 +7,10 @@ import pytest
 from tw_rent_radar.crawlers.fb_group import FbGroupCrawler
 from tw_rent_radar.crawlers.fb_market import FbMarketCrawler
 
-
 # ------------------------------------------------------------------
 # Source name sanity checks
 # ------------------------------------------------------------------
+
 
 def test_fb_group_has_source_name():
     crawler = FbGroupCrawler()
@@ -25,14 +26,17 @@ def test_fb_market_has_source_name():
 # Auth module
 # ------------------------------------------------------------------
 
+
 def test_fb_session_dir_defined():
     from tw_rent_radar.crawlers.fb_auth import FB_SESSION_DIR
+
     assert FB_SESSION_DIR is not None
 
 
 # ------------------------------------------------------------------
 # Price parsing (FbGroupCrawler)
 # ------------------------------------------------------------------
+
 
 def test_parse_price_from_text():
     crawler = FbGroupCrawler()
@@ -60,6 +64,7 @@ def test_parse_price_dollar_sign_with_comma():
 # ------------------------------------------------------------------
 # crawl() returns empty list (skeleton)
 # ------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_fb_group_crawl_no_group_returns_empty():

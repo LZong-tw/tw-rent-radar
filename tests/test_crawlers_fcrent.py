@@ -1,4 +1,5 @@
 """Tests for the fcrent crawler — uses mock HTML, no live requests."""
+
 from __future__ import annotations
 
 import json
@@ -35,10 +36,7 @@ def _make_html(next_data: dict | None = None) -> str:
     body = "<html><head>"
     if next_data is not None:
         payload = json.dumps(next_data, ensure_ascii=False)
-        body += (
-            f'<script id="__NEXT_DATA__" type="application/json">'
-            f"{payload}</script>"
-        )
+        body += f'<script id="__NEXT_DATA__" type="application/json">{payload}</script>'
     body += "</head><body></body></html>"
     return body
 
@@ -94,11 +92,11 @@ class TestParseNextData:
     def test_parse_next_data_invalid_json(self):
         """Malformed JSON inside __NEXT_DATA__ returns None."""
         html = (
-            '<html><head>'
+            "<html><head>"
             '<script id="__NEXT_DATA__" type="application/json">'
-            '{not valid json}'
-            '</script>'
-            '</head><body></body></html>'
+            "{not valid json}"
+            "</script>"
+            "</head><body></body></html>"
         )
         crawler = FcrentCrawler()
         result = crawler.parse_listing_page(html)

@@ -1,4 +1,5 @@
 """Facebook Marketplace crawler for rental listings."""
+
 from __future__ import annotations
 
 from tw_rent_radar.crawlers.base import BaseCrawler
@@ -8,9 +9,7 @@ class FbMarketCrawler(BaseCrawler):
     """Scrape rental listings from Facebook Marketplace (Taiwan)."""
 
     source_name = "fb_market"
-    marketplace_url = (
-        "https://www.facebook.com/marketplace/category/propertyrentals"
-    )
+    marketplace_url = "https://www.facebook.com/marketplace/category/propertyrentals"
 
     async def crawl(self, **filters) -> list[dict]:
         """Crawl Facebook Marketplace for rental listings.
