@@ -123,6 +123,10 @@ def crawl(source, city, group, db_path):
 @click.option("--rooms", default=None, help="Filter by rooms.")
 @click.option("--type", "listing_type", default=None, help="Filter by listing type.")
 @click.option("--source", default=None, help="Filter by source platform.")
+@click.option("--cooking", default=None, help="Filter by cooking policy (可開伙/不可開伙).")
+@click.option("--gas-type", "gas_type", default=None, help="Filter by gas type.")
+@click.option("--near", default=None, help="POI or address to calculate distance from.")
+@click.option("--within", type=float, default=None, help="Max distance in km (requires --near).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option("--fields", default=None, help="Comma-separated list of fields to show.")
 @click.option("--db", "db_path", default=DEFAULT_DB, hidden=True)
@@ -134,6 +138,10 @@ def search(
     rooms: str | None,
     listing_type: str | None,
     source: str | None,
+    cooking: str | None,
+    gas_type: str | None,
+    near: str | None,
+    within: float | None,
     as_json: bool,
     fields: str | None,
     db_path: str,
@@ -158,15 +166,45 @@ def search(
             query = query.filter(Listing.type == listing_type)
         if source:
             query = query.filter(Listing.source == source)
+        if cooking:
+            query = query.filter(Listing.cooking == cooking)
+        if gas_type:
+            query = query.filter(Listing.gas_type == gas_type)
 
         listings = query.all()
         field_list = fields.split(",") if fields else None
         dicts = [item.to_dict(field_list) for item in listings]
 
+    # Distance filtering with --near
+    if near:
+        from tw_rent_radar.geo import geocode as geo_lookup
+        from tw_rent_radar.geo import haversine_km
+
+        target = geo_lookup(near)
+        if target is None:
+            click.echo(
+                f"Could not geocode '{near}'. " "Check API keys in ~/.tw-rent-radar/config.json"
+            )
+            return
+
+        target_lat, target_lng = target
+        filtered = []
+        for d in dicts:
+            lat, lng = d.get("latitude"), d.get("longitude")
+            if lat is None or lng is None:
+                continue
+            dist = haversine_km(target_lat, target_lng, lat, lng)
+            d["distance_km"] = round(dist, 2)
+            if within is None or dist <= within:
+                filtered.append(d)
+        dicts = sorted(filtered, key=lambda x: x["distance_km"])
+
     if as_json:
         click.echo(format_json(dicts, fields=field_list))
     elif dicts:
         default_cols = ["id", "source", "title", "price", "city", "district"]
+        if near:
+            default_cols.append("distance_km")
         click.echo(format_table(dicts, columns=field_list or default_cols))
     else:
         click.echo("No listings found.")

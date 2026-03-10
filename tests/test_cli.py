@@ -138,3 +138,117 @@ def test_crawl_geocodes_listings(runner, empty_db, monkeypatch):
         result = runner.invoke(cli, ["crawl", "591", "--city", "高雄市", "--db", empty_db])
         assert result.exit_code == 0
         mock_geo.assert_called_once()
+
+
+def test_search_cooking_filter(runner, empty_db):
+    """search --cooking filters by cooking policy."""
+    from tw_rent_radar.db import Session, get_engine, upsert_listing
+
+    engine = get_engine(empty_db)
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="cook1",
+            title="可開伙套房",
+            price=10000,
+            city="高雄市",
+            cooking="可開伙",
+        )
+        upsert_listing(
+            session,
+            source="591",
+            source_id="cook2",
+            title="不可開伙套房",
+            price=10000,
+            city="高雄市",
+            cooking="不可開伙",
+        )
+        session.commit()
+
+    result = runner.invoke(cli, ["search", "--cooking", "可開伙", "--json", "--db", empty_db])
+    assert result.exit_code == 0
+    import json as _json
+
+    data = _json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["cooking"] == "可開伙"
+
+
+def test_search_gas_type_filter(runner, empty_db):
+    """search --gas-type filters by gas type."""
+    from tw_rent_radar.db import Session, get_engine, upsert_listing
+
+    engine = get_engine(empty_db)
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="gas1",
+            title="天然瓦斯",
+            price=10000,
+            city="高雄市",
+            gas_type="天然瓦斯",
+        )
+        upsert_listing(
+            session,
+            source="591",
+            source_id="gas2",
+            title="桶裝瓦斯",
+            price=10000,
+            city="高雄市",
+            gas_type="桶裝瓦斯",
+        )
+        session.commit()
+
+    result = runner.invoke(cli, ["search", "--gas-type", "天然瓦斯", "--json", "--db", empty_db])
+    assert result.exit_code == 0
+    import json as _json
+
+    data = _json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["gas_type"] == "天然瓦斯"
+
+
+def test_search_near_filter(runner, empty_db):
+    """search --near --within filters by distance."""
+    from unittest.mock import patch
+
+    from tw_rent_radar.db import Session, get_engine, upsert_listing
+
+    engine = get_engine(empty_db)
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="near1",
+            title="Near",
+            price=10000,
+            city="高雄市",
+            latitude=22.6130,
+            longitude=120.3060,
+        )
+        upsert_listing(
+            session,
+            source="591",
+            source_id="far1",
+            title="Far",
+            price=10000,
+            city="高雄市",
+            latitude=22.700,
+            longitude=120.400,
+        )
+        session.commit()
+
+    with patch("tw_rent_radar.geo.geocode", return_value=(22.6125, 120.3056)):
+        result = runner.invoke(
+            cli,
+            ["search", "--near", "高雄軟體園區", "--within", "2", "--json", "--db", empty_db],
+        )
+        assert result.exit_code == 0
+        import json as _json
+
+        data = _json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["title"] == "Near"
+        assert "distance_km" in data[0]
