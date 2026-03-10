@@ -24,6 +24,7 @@ from tw_rent_radar.crawlers import (
     Rent591Crawler,
 )
 from tw_rent_radar.db import DEFAULT_DB_PATH, Listing, create_tables, get_engine, upsert_listing
+from tw_rent_radar.geo import geocode
 from tw_rent_radar.output import format_json, format_table
 
 SOURCES = {
@@ -48,6 +49,20 @@ DEFAULT_DB = DEFAULT_DB_PATH
 console = Console()
 
 
+def geocode_listing(session: Session, listing_id: int) -> None:
+    """Geocode a listing if it has an address but no coordinates."""
+    listing = session.get(Listing, listing_id)
+    if listing is None or listing.latitude is not None:
+        return
+    if not listing.address:
+        return
+    full_addr = f"{listing.city or ''}{listing.address}"
+    coords = geocode(full_addr)
+    if coords:
+        listing.latitude, listing.longitude = coords
+        session.commit()
+
+
 def run_crawler(source: str, db_path: str | None, **filters) -> int:
     """Dispatch to crawler class, crawl, and upsert results into the DB."""
     crawler_cls = CRAWLER_MAP.get(source)
@@ -64,7 +79,8 @@ def run_crawler(source: str, db_path: str | None, **filters) -> int:
     count = 0
     with Session(engine) as session:
         for item in listings:
-            upsert_listing(session, **item)
+            result = upsert_listing(session, **item)
+            geocode_listing(session, result.id)
             count += 1
         session.commit()
 

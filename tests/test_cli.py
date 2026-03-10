@@ -112,3 +112,29 @@ def test_show_chinese_characters(runner, empty_db):
     assert result.exit_code == 0
     assert "苓雅區兩房一廳" in result.output
     assert "可開伙" in result.output
+
+
+def test_crawl_geocodes_listings(runner, empty_db, monkeypatch):
+    """crawl command geocodes listings that have addresses."""
+    from unittest.mock import AsyncMock, patch
+
+    from tw_rent_radar.crawlers.rent591 import Rent591Crawler
+
+    mock_crawl = AsyncMock(
+        return_value=[
+            {
+                "source": "591",
+                "source_id": "geo_test_1",
+                "title": "Test",
+                "price": 10000,
+                "city": "高雄市",
+                "address": "前鎮區復興四路2號",
+            }
+        ]
+    )
+    monkeypatch.setattr(Rent591Crawler, "crawl", mock_crawl)
+
+    with patch("tw_rent_radar.cli.geocode_listing") as mock_geo:
+        result = runner.invoke(cli, ["crawl", "591", "--city", "高雄市", "--db", empty_db])
+        assert result.exit_code == 0
+        mock_geo.assert_called_once()
