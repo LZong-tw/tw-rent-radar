@@ -12,6 +12,8 @@
 - **本機 SQLite 儲存** — 免安裝資料庫，單一檔案（`radar.db`）
 - **自動去重** — 以 `(source, source_id)` 為唯一鍵，重複爬取時更新既有紀錄
 - **Playwright 驅動** — 統一處理 SPA、反爬蟲機制、需登入的網站
+- **距離搜尋** — 支援 `--near` 和 `--within` 旗標，以 TGOS/Google Maps 計算物件與指定地點的距離
+- **詳情頁爬取** — 使用 `--fetch-details` 取得開伙政策、瓦斯類型、完整設備清單
 
 ## 支援平台
 
@@ -61,6 +63,9 @@ tw-rent-radar crawl fb_group --group "高雄租屋"
 
 # 一次爬取所有平台
 tw-rent-radar crawl all --city 高雄市
+
+# 爬取含詳情頁資料（開伙、瓦斯、設備）
+tw-rent-radar crawl 591 --city 高雄市 --fetch-details
 ```
 
 ### `search` — 搜尋已儲存的物件
@@ -76,6 +81,18 @@ tw-rent-radar search --city 高雄市 --max-price 15000 --json
 
 # 指定輸出欄位
 tw-rent-radar search --json --fields title,price,address,url
+
+# 搜尋可開伙的物件
+tw-rent-radar search --cooking 可開伙
+
+# 搜尋天然瓦斯的物件
+tw-rent-radar search --gas-type 天然瓦斯
+
+# 搜尋距離特定地點 2 公里內的物件
+tw-rent-radar search --near "高雄軟體園區" --within 2
+
+# 組合篩選
+tw-rent-radar search --city 高雄市 --max-price 18000 --cooking 可開伙 --near "高雄軟體園區" --within 2
 ```
 
 ### `show` — 檢視單一物件詳情
@@ -159,6 +176,26 @@ tw-rent-radar stats --json
 | `images` | array | 圖片網址陣列 |
 | `amenities` | array | 設備清單（如 `["冷氣", "洗衣機"]`） |
 | `description` | string | 物件描述 |
+| `latitude` | float | 經緯度（緯度） |
+| `longitude` | float | 經緯度（經度） |
+| `cooking` | string | 開伙政策（可開伙／不可開伙） |
+| `gas_type` | string | 瓦斯類型（天然瓦斯／桶裝瓦斯） |
+
+## Geocoding 設定
+
+距離搜尋功能需要 TGOS 或 Google Maps API 金鑰。在 `~/.tw-rent-radar/config.json` 設定：
+
+```json
+{
+  "tgos_app_id": "你的 TGOS App ID",
+  "tgos_api_key": "你的 TGOS API Key",
+  "google_api_key": "你的 Google Maps API Key"
+}
+```
+
+或設定環境變數：`TGOS_APP_ID`、`TGOS_API_KEY`、`GOOGLE_MAPS_API_KEY`。
+
+TGOS 適合台灣門牌地址，Google Maps 適合 POI 名稱（如「高雄軟體園區」）。兩者互為備援。
 
 ## 開發
 

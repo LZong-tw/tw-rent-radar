@@ -14,6 +14,7 @@ Target users: people looking for rental housing in Taiwan. All rental data field
 - **CLI framework**: Click
 - **Database**: SQLite via SQLAlchemy 2.0 ORM (declarative mapped columns)
 - **Web crawling**: Playwright (async) with playwright-stealth for anti-bot bypass
+- **HTTP requests**: requests (for geocoding API calls)
 - **Output formatting**: Rich (tables, colored console output)
 - **Linting/formatting**: Ruff (linter + formatter)
 - **Testing**: pytest + pytest-asyncio + pytest-timeout
@@ -33,6 +34,7 @@ tw-rent-radar/
     cli.py                          # Click CLI: crawl, search, show, stats, list, db commands
     db.py                           # SQLAlchemy ORM: Listing model, upsert_listing, get_engine
     output.py                       # Rich table + JSON formatting
+    geo.py                          # TGOS + Google Maps geocoding, Haversine distance
     crawlers/
       __init__.py                   # Re-exports all crawler classes
       base.py                       # BaseCrawler ABC (source_name, async crawl())
@@ -146,6 +148,10 @@ The `Listing` model in `db.py` is the single source of truth for all crawled dat
 | `description`| Text         | Listing description                            | 描述                         |
 | `amenities`  | Text (JSON)  | JSON array of amenity names                    | 設備（如：冷氣、洗衣機）     |
 | `raw_data`   | Text (JSON)  | Original crawled data preserved as JSON        | 原始資料                     |
+| `latitude`   | Float        | Geocoded latitude (TGOS/Google)                |                              |
+| `longitude`  | Float        | Geocoded longitude (TGOS/Google)               |                              |
+| `cooking`    | String(50)   | Cooking policy                                 | 開伙（可開伙/不可開伙）     |
+| `gas_type`   | String(50)   | Gas type                                       | 瓦斯（天然瓦斯/桶裝瓦斯）   |
 | `created_at` | DateTime     | First crawl timestamp (UTC)                    |                              |
 | `updated_at` | DateTime     | Last update timestamp (UTC)                    |                              |
 
@@ -190,8 +196,8 @@ All crawlers inherit from `BaseCrawler` (ABC) and implement `async crawl(**filte
 
 ```
 tw-rent-radar
-  ├── crawl <source|all>    # Crawl and store listings
-  ├── search                # Query stored listings with filters
+  ├── crawl <source|all>    # Crawl and store listings (--fetch-details for detail pages)
+  ├── search                # Query with filters (--near, --within, --cooking, --gas-type)
   ├── show <id>             # Display single listing details
   ├── stats                 # Show listing counts by source
   ├── list sources          # List supported platforms
@@ -254,6 +260,8 @@ tw-rent-radar
 - **Price parsing varies by platform**: Each crawler has its own `parse_price()` because platforms format prices differently (e.g., "15,000 元/月", "25,000元", "$8000", "面議"). Always return `None` for unparseable/negotiable prices.
 - **Region/city code mappings**: 591 and Rakuya use different numeric codes for the same cities. Each crawler maintains its own `REGION_MAP` / `CITY_CODES` dict. These are hardcoded and may need updating if platforms change their codes.
 - **Windows development environment**: This project is developed on Windows (Git Bash). Use forward slashes in paths. The venv activation is `source .venv/Scripts/activate` (not `bin/activate`).
+- **Geocoding API keys**: TGOS requires registration at https://www.tgos.tw/. Google Maps requires API key from Google Cloud Console. Configure keys in `~/.tw-rent-radar/config.json` (`tgos_app_id`, `tgos_api_key`, `google_api_key`) or as environment variables (`TGOS_APP_ID`, `TGOS_API_KEY`, `GOOGLE_MAPS_API_KEY`). Without keys, geocoding is skipped and `--near` search is unavailable.
+- **591 detail page rate limiting**: Fetching detail pages (`--fetch-details`) is slower — each listing requires a separate page load. Too-fast requests may trigger anti-bot measures that return randomized data.
 
 ## Writing Style
 
