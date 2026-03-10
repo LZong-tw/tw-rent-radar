@@ -247,6 +247,38 @@ class TestParseDetailData:
         assert result.get("cooking") is None
         assert result.get("gas_type") is None
 
+    def test_cooking_from_tags_fallback(self):
+        """When service.rule is empty, cooking should be extracted from tags."""
+        detail_store = {
+            "data": {
+                "service": {"facility": [], "rule": ""},
+                "tags": [{"id": 6, "value": "可開伙"}, {"id": 7, "value": "可養寵物"}],
+            }
+        }
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["cooking"] == "可開伙"
+
+    def test_cooking_from_tags_not_allowed(self):
+        """Tags with 不可開伙 should set cooking correctly."""
+        detail_store = {
+            "data": {
+                "tags": [{"id": 6, "value": "不可開伙"}],
+            }
+        }
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["cooking"] == "不可開伙"
+
+    def test_cooking_rule_takes_priority_over_tags(self):
+        """When rule has cooking info, tags should not override it."""
+        detail_store = {
+            "data": {
+                "service": {"facility": [], "rule": "不可開伙"},
+                "tags": [{"id": 6, "value": "可開伙"}],
+            }
+        }
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["cooking"] == "不可開伙"
+
 
 class TestRegionMap:
     def test_taipei(self):

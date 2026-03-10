@@ -81,7 +81,10 @@ class Rent591Crawler(BaseCrawler):
     _EXTRACT_DETAIL_JS = """() => {
     const n = window.__NUXT__;
     if (!n || !n.pinia || !n.pinia['rent-detail-info']) return null;
-    try { return JSON.parse(JSON.stringify(n.pinia['rent-detail-info'])); }
+    const store = n.pinia['rent-detail-info'];
+    // Data may be at top level or nested inside ctx._rawValue (Vue reactivity wrapper)
+    const raw = (store.ctx && store.ctx._rawValue) || store.data || store;
+    try { return JSON.parse(JSON.stringify({data: raw})); }
     catch(e) { return null; }
 }"""
 
@@ -156,12 +159,24 @@ class Rent591Crawler(BaseCrawler):
             if amenities:
                 result["amenities"] = json.dumps(amenities, ensure_ascii=False)
 
-            # Cooking rule
-            rule = service.get("rule", "")
+            # Cooking rule from service.rule
+            rule = service.get("rule", "") or service.get("desc", "")
             if "不可開伙" in rule:
                 result["cooking"] = "不可開伙"
             elif "可開伙" in rule:
                 result["cooking"] = "可開伙"
+
+        # Cooking fallback: check tags array (e.g. [{"id": 6, "value": "可開伙"}])
+        if "cooking" not in result:
+            tags = data.get("tags")
+            if isinstance(tags, list):
+                tag_values = " ".join(
+                    t.get("value", "") if isinstance(t, dict) else str(t) for t in tags
+                )
+                if "不可開伙" in tag_values:
+                    result["cooking"] = "不可開伙"
+                elif "可開伙" in tag_values:
+                    result["cooking"] = "可開伙"
 
         # Description from remark
         remark = data.get("remark")
