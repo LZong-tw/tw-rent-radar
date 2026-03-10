@@ -186,7 +186,7 @@ def search(
         target = geo_lookup(near)
         if target is None:
             click.echo(
-                f"Could not geocode '{near}'. " "Check API keys in ~/.tw-rent-radar/config.json"
+                f"Could not geocode '{near}'. Check API keys in ~/.tw-rent-radar/config.json"
             )
             return
 
