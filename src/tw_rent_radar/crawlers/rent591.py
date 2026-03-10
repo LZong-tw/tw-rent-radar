@@ -78,6 +78,13 @@ class Rent591Crawler(BaseCrawler):
     source_name = "591"
     list_base_url = "https://rent.591.com.tw/list"
 
+    _EXTRACT_DETAIL_JS = """() => {
+    const n = window.__NUXT__;
+    if (!n || !n.pinia || !n.pinia['rent-detail-info']) return null;
+    try { return JSON.parse(JSON.stringify(n.pinia['rent-detail-info'])); }
+    catch(e) { return null; }
+}"""
+
     def parse_price(self, price_str: str) -> int | None:
         """Parse price string like '15,000' or '15,000 元/月' to int. Return None for '面議'.
 
@@ -97,6 +104,73 @@ class Rent591Crawler(BaseCrawler):
         # Use the last numeric match (handles "含管理費 12,500 元/月")
         raw = matches[-1]
         return int(raw.replace(",", ""))
+
+    def parse_detail_data(self, detail_store: dict) -> dict:
+        """Extract additional fields from a 591 detail page Pinia store.
+
+        The detail store is expected to have the structure::
+
+            {"data": {"positionRound": {...}, "service": {...}, "remark": {...}}}
+
+        Returns a dict with extracted fields, or empty dict if no useful data.
+        """
+        data = detail_store.get("data")
+        if not data or not isinstance(data, dict):
+            return {}
+
+        result: dict = {}
+
+        # Position / address
+        position = data.get("positionRound")
+        if position and isinstance(position, dict):
+            address = position.get("address")
+            if address:
+                result["address"] = address
+            lat = position.get("lat")
+            lng = position.get("lng")
+            try:
+                if lat is not None:
+                    result["latitude"] = float(lat)
+                if lng is not None:
+                    result["longitude"] = float(lng)
+            except (ValueError, TypeError):
+                pass
+
+        # Service: facility and rule
+        service = data.get("service")
+        if service and isinstance(service, dict):
+            facility = service.get("facility") or []
+
+            # Gas type: find item with key=="gas" and active==True
+            for item in facility:
+                if item.get("key") == "gas" and item.get("active"):
+                    result["gas_type"] = item.get("name")
+                    break
+
+            # Amenities: collect names of active items, excluding gas
+            amenities = [
+                item.get("name")
+                for item in facility
+                if item.get("active") and item.get("key") != "gas" and item.get("name")
+            ]
+            if amenities:
+                result["amenities"] = json.dumps(amenities, ensure_ascii=False)
+
+            # Cooking rule
+            rule = service.get("rule", "")
+            if "不可開伙" in rule:
+                result["cooking"] = "不可開伙"
+            elif "可開伙" in rule:
+                result["cooking"] = "可開伙"
+
+        # Description from remark
+        remark = data.get("remark")
+        if remark and isinstance(remark, dict):
+            content = remark.get("content")
+            if content:
+                result["description"] = content
+
+        return result
 
     def parse_list_item(self, item: dict, city: str) -> dict:
         """Normalize a single listing from 591 Nuxt SSR data to Listing schema.
@@ -170,9 +244,11 @@ class Rent591Crawler(BaseCrawler):
         Keyword arguments:
             city: str -- City name in Chinese (default: "台北市")
             max_pages: int -- Maximum number of pages to crawl (default: 5)
+            fetch_details: bool -- Visit each detail page for extra fields (default: False)
         """
         city = filters.get("city", "台北市")
         max_pages = filters.get("max_pages", 5)
+        fetch_details = filters.get("fetch_details", False)
         region_id = REGION_MAP.get(city, 1)
 
         results: list[dict] = []
@@ -220,6 +296,22 @@ class Rent591Crawler(BaseCrawler):
                     results.append(parsed)
 
                 logger.info("Parsed %d items from page %d", len(items), page_num)
+
+            # Crawl detail pages for additional fields
+            if fetch_details:
+                for listing in results:
+                    url = listing.get("url")
+                    if not url:
+                        continue
+                    try:
+                        await page.goto(url, wait_until="networkidle", timeout=30000)
+                        detail_store = await page.evaluate(self._EXTRACT_DETAIL_JS)
+                        if detail_store:
+                            detail = self.parse_detail_data(detail_store)
+                            listing.update({k: v for k, v in detail.items() if v is not None})
+                    except Exception:  # noqa: BLE001
+                        logger.warning("Detail page failed for %s", url)
+                        continue
 
             await browser.close()
 

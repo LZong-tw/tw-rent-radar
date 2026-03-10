@@ -186,6 +186,68 @@ class TestCrawlerAttributes:
         assert isinstance(crawler, BaseCrawler)
 
 
+class TestParseDetailData:
+    def setup_method(self):
+        self.crawler = Rent591Crawler()
+
+    def test_full_detail(self):
+        detail_store = {
+            "data": {
+                "positionRound": {
+                    "address": "前鎮區復興四路12號",
+                    "lat": "22.6125",
+                    "lng": "120.3056",
+                },
+                "service": {
+                    "facility": [
+                        {"key": "cold", "active": True, "name": "冷氣"},
+                        {"key": "washer", "active": True, "name": "洗衣機"},
+                        {"key": "gas", "active": True, "name": "天然瓦斯"},
+                        {"key": "fridge", "active": False, "name": "冰箱"},
+                    ],
+                    "rule": "此房屋不可開伙，不可養寵物",
+                },
+                "remark": {"content": "近捷運站，生活機能佳"},
+            }
+        }
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["latitude"] == 22.6125
+        assert result["longitude"] == 120.3056
+        assert result["address"] == "前鎮區復興四路12號"
+        assert result["gas_type"] == "天然瓦斯"
+        assert result["cooking"] == "不可開伙"
+        assert "冷氣" in result["amenities"]
+        assert "洗衣機" in result["amenities"]
+        assert "冰箱" not in result["amenities"]
+        assert result["description"] == "近捷運站，生活機能佳"
+
+    def test_cooking_allowed(self):
+        detail_store = {"data": {"service": {"facility": [], "rule": "可開伙，可養寵物"}}}
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["cooking"] == "可開伙"
+
+    def test_no_gas(self):
+        facility = [{"key": "gas", "active": False, "name": "天然瓦斯"}]
+        detail_store = {"data": {"service": {"facility": facility}}}
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result.get("gas_type") is None
+
+    def test_bottled_gas(self):
+        facility = [{"key": "gas", "active": True, "name": "桶裝瓦斯"}]
+        detail_store = {"data": {"service": {"facility": facility}}}
+        result = self.crawler.parse_detail_data(detail_store)
+        assert result["gas_type"] == "桶裝瓦斯"
+
+    def test_empty_detail(self):
+        result = self.crawler.parse_detail_data({})
+        assert result == {}
+
+    def test_missing_sections(self):
+        result = self.crawler.parse_detail_data({"data": {}})
+        assert result.get("cooking") is None
+        assert result.get("gas_type") is None
+
+
 class TestRegionMap:
     def test_taipei(self):
         assert REGION_MAP["台北市"] == 1
