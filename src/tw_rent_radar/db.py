@@ -51,6 +51,10 @@ class Listing(Base):
     description: Mapped[str | None] = mapped_column(Text)
     amenities: Mapped[str | None] = mapped_column(Text)  # JSON array
     raw_data: Mapped[str | None] = mapped_column(Text)  # JSON object
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    cooking: Mapped[str | None] = mapped_column(String(50))
+    gas_type: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

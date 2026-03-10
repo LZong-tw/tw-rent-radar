@@ -104,3 +104,56 @@ def test_data_dir_points_to_home():
     from pathlib import Path
 
     assert DATA_DIR == Path.home() / ".tw-rent-radar"
+
+
+def test_listing_has_geo_and_detail_columns(tmp_path):
+    """Listing model has latitude, longitude, cooking, gas_type columns."""
+    db_path = tmp_path / "test.db"
+    engine = get_engine(str(db_path))
+    create_tables(engine)
+
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="geo1",
+            title="Test",
+            latitude=22.6273,
+            longitude=120.3014,
+            cooking="可開伙",
+            gas_type="天然瓦斯",
+        )
+
+    with Session(engine) as session:
+        listing = session.query(Listing).one()
+        assert listing.latitude == 22.6273
+        assert listing.longitude == 120.3014
+        assert listing.cooking == "可開伙"
+        assert listing.gas_type == "天然瓦斯"
+
+
+def test_to_dict_includes_new_columns(tmp_path):
+    """to_dict includes latitude, longitude, cooking, gas_type."""
+    db_path = tmp_path / "test.db"
+    engine = get_engine(str(db_path))
+    create_tables(engine)
+
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="dict1",
+            title="Test",
+            latitude=25.033,
+            longitude=121.565,
+            cooking="不可開伙",
+            gas_type="桶裝瓦斯",
+        )
+
+    with Session(engine) as session:
+        listing = session.query(Listing).one()
+        d = listing.to_dict()
+        assert d["latitude"] == 25.033
+        assert d["longitude"] == 121.565
+        assert d["cooking"] == "不可開伙"
+        assert d["gas_type"] == "桶裝瓦斯"
