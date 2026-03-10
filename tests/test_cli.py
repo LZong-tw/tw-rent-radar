@@ -210,6 +210,13 @@ def test_search_gas_type_filter(runner, empty_db):
     assert data[0]["gas_type"] == "天然瓦斯"
 
 
+def test_crawl_help_shows_fetch_details(runner):
+    """crawl --help shows --fetch-details option."""
+    result = runner.invoke(cli, ["crawl", "591", "--help"])
+    assert result.exit_code == 0
+    assert "fetch-details" in result.output
+
+
 def test_search_near_filter(runner, empty_db):
     """search --near --within filters by distance."""
     from unittest.mock import patch

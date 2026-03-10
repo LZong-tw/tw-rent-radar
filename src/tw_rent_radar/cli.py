@@ -99,14 +99,17 @@ def cli():
 @click.argument("source", type=click.Choice(list(SOURCES.keys()) + ["all"]))
 @click.option("--city", help="縣市，例如 高雄市")
 @click.option("--group", help="Facebook 社團名稱")
+@click.option("--fetch-details", is_flag=True, help="爬取詳情頁（較慢，但取得更多資訊）")
 @click.option("--db", "db_path", default=None, hidden=True)
-def crawl(source, city, group, db_path):
+def crawl(source, city, group, fetch_details, db_path):
     """爬取租屋資料"""
     filters = {}
     if city:
         filters["city"] = city
     if group:
         filters["group"] = group
+    if fetch_details:
+        filters["fetch_details"] = True
 
     if source == "all":
         for src in CRAWLER_MAP:
