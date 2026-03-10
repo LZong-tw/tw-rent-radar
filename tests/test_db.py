@@ -63,3 +63,33 @@ def test_upsert_deduplicates(tmp_path):
         assert len(listings) == 1
         assert listings[0].title == "New Title"
         assert listings[0].price == 18000
+
+
+def test_get_engine_relative_path_uses_cwd(tmp_path, monkeypatch):
+    """get_engine with a relative path creates the DB relative to CWD, not project root.
+
+    This was a real bug: running `tw-rent-radar crawl` from D:\\ created radar.db
+    at D:\\radar.db instead of D:\\tw-rent-radar\\radar.db.
+    """
+    monkeypatch.chdir(tmp_path)
+    engine = get_engine("radar.db")
+    create_tables(engine)
+
+    with Session(engine) as session:
+        upsert_listing(session, source="591", source_id="test1", title="Test")
+
+    # DB should be created in CWD (tmp_path), not elsewhere
+    assert (tmp_path / "radar.db").exists()
+
+
+def test_get_engine_absolute_path(tmp_path):
+    """get_engine with an absolute path creates the DB at that exact location."""
+    db_path = tmp_path / "subdir" / "custom.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    engine = get_engine(str(db_path))
+    create_tables(engine)
+
+    with Session(engine) as session:
+        upsert_listing(session, source="591", source_id="abs1", title="Absolute")
+
+    assert db_path.exists()

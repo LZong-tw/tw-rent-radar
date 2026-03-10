@@ -55,3 +55,60 @@ def test_list_sources(runner):
     assert "fcrent" in result.output
     assert "fb_group" in result.output
     assert "fb_market" in result.output
+
+
+def test_search_chinese_characters_in_output(runner, empty_db):
+    """Chinese characters in listing data render correctly in CLI output.
+
+    This was a real bug on Windows: sys.stdout with cp950 encoding raised
+    UnicodeEncodeError for Chinese characters outside the Big5 range.
+    """
+    from tw_rent_radar.db import Session, get_engine, upsert_listing
+
+    engine = get_engine(empty_db)
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="591",
+            source_id="chinese1",
+            title="三民區溫馨套房 近高雄車站",
+            price=8500,
+            city="高雄市",
+            district="三民區",
+        )
+        session.commit()
+
+    # JSON output should contain the Chinese characters
+    result = runner.invoke(cli, ["search", "--json", "--db", empty_db])
+    assert result.exit_code == 0
+    assert "三民區溫馨套房" in result.output
+    assert "高雄市" in result.output
+
+    # Table output should also work
+    result = runner.invoke(cli, ["search", "--db", empty_db])
+    assert result.exit_code == 0
+    assert "三民區溫馨套房" in result.output
+
+
+def test_show_chinese_characters(runner, empty_db):
+    """show command handles Chinese text correctly."""
+    from tw_rent_radar.db import Session, get_engine, upsert_listing
+
+    engine = get_engine(empty_db)
+    with Session(engine) as session:
+        upsert_listing(
+            session,
+            source="fcrent",
+            source_id="cn1",
+            title="苓雅區兩房一廳",
+            price=16000,
+            city="高雄市",
+            district="苓雅區",
+            description="近捷運站，可開伙，天然瓦斯",
+        )
+        session.commit()
+
+    result = runner.invoke(cli, ["show", "1", "--json", "--db", empty_db])
+    assert result.exit_code == 0
+    assert "苓雅區兩房一廳" in result.output
+    assert "可開伙" in result.output

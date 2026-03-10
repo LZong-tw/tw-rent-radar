@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 
 import click
+
+# Fix Windows console encoding for Chinese characters
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 from rich.console import Console
 from sqlalchemy.orm import Session
 

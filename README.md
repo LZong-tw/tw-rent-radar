@@ -1,130 +1,130 @@
 # tw-rent-radar
 
-Multi-platform Taiwan rental listing CLI tool.
+多平台台灣租屋資訊命令列工具。
 
-Crawl listings from multiple Taiwanese rental platforms into a local SQLite database, then search and filter them from the terminal. Designed for both human use (Rich tables) and LLM integration (`--json` structured output).
+從多個台灣租屋平台爬取物件資料，存入本機 SQLite 資料庫，再透過終端機搜尋與篩選。同時支援人類使用（Rich 表格輸出）與 LLM 整合（`--json` 結構化輸出）。
 
-## Features
+## 功能特色
 
-- **Multi-platform crawling** -- 591, Rakuya, fcrent, Facebook Groups, Facebook Marketplace
-- **Human-friendly output** -- Rich-formatted terminal tables with search and filtering
-- **LLM-friendly output** -- `--json` flag on every query command for structured data
-- **Local SQLite storage** -- zero-install database, single file (`radar.db`)
-- **Deduplication** -- upsert on `(source, source_id)` so re-crawling updates existing records
-- **Playwright-based** -- handles SPAs, anti-scraping, and login-gated sites uniformly
+- **多平台爬取** — 591 租屋網、樂屋網、方齊物業、Facebook 社團、Facebook Marketplace
+- **人類友善輸出** — Rich 格式化終端機表格，支援搜尋與篩選
+- **LLM 友善輸出** — 所有查詢指令支援 `--json` 旗標，輸出結構化資料
+- **本機 SQLite 儲存** — 免安裝資料庫，單一檔案（`radar.db`）
+- **自動去重** — 以 `(source, source_id)` 為唯一鍵，重複爬取時更新既有紀錄
+- **Playwright 驅動** — 統一處理 SPA、反爬蟲機制、需登入的網站
 
-## Supported Platforms
+## 支援平台
 
-| Platform | Key | Status | Notes |
-|----------|-----|--------|-------|
-| 591 租屋網 | `591` | Working | API-based with CSRF token handling |
-| 樂屋網 (Rakuya) | `rakuya` | Working | Playwright stealth mode for Cloudflare bypass |
-| 方齊物業 (fcrent) | `fcrent` | Working | Next.js SSR, parses `__NEXT_DATA__` |
-| Facebook 租屋社團 | `fb_group` | Skeleton | Auth flow implemented, DOM selectors TBD |
-| Facebook Marketplace | `fb_market` | Skeleton | Auth flow implemented, DOM selectors TBD |
+| 平台 | 代碼 | 狀態 | 備註 |
+|------|------|------|------|
+| 591 租屋網 | `591` | 可用 | Nuxt 3 SSR Pinia store 擷取 |
+| 樂屋網 (Rakuya) | `rakuya` | 可用 | playwright-stealth 繞過 Cloudflare |
+| 方齊物業 (fcrent) | `fcrent` | 可用 | Next.js SSR，解析 `__NEXT_DATA__` |
+| Facebook 租屋社團 | `fb_group` | 骨架 | 驗證流程已實作，DOM 選擇器待完成 |
+| Facebook Marketplace | `fb_market` | 骨架 | 驗證流程已實作，DOM 選擇器待完成 |
 
-## Quick Start
+## 快速開始
 
 ```bash
-# Clone the repository
-git clone https://github.com/<your-username>/tw-rent-radar.git
+# 複製專案
+git clone https://github.com/LZong-tw/tw-rent-radar.git
 cd tw-rent-radar
 
-# Create a virtual environment (Python 3.12+)
+# 建立虛擬環境（Python 3.12+）
 python -m venv .venv
 source .venv/bin/activate        # Linux/macOS
 source .venv/Scripts/activate    # Windows (Git Bash)
 
-# Install in editable mode
+# 以可編輯模式安裝
 pip install -e ".[dev]"
 
-# Install Playwright browsers
+# 安裝 Playwright 瀏覽器
 playwright install chromium
 ```
 
-## Usage
+## 使用方式
 
-### `crawl` -- Crawl rental listings
+### `crawl` — 爬取租屋資料
 
 ```bash
-# Crawl 591 listings for a specific city
+# 爬取 591 特定縣市的物件
 tw-rent-radar crawl 591 --city 高雄市
 
-# Crawl Rakuya
+# 爬取樂屋網
 tw-rent-radar crawl rakuya --city 台北市
 
-# Crawl fcrent (no city filter needed)
+# 爬取方齊物業（不需指定縣市）
 tw-rent-radar crawl fcrent
 
-# Crawl a Facebook group
+# 爬取 Facebook 社團
 tw-rent-radar crawl fb_group --group "高雄租屋"
 
-# Crawl all platforms at once
+# 一次爬取所有平台
 tw-rent-radar crawl all --city 高雄市
 ```
 
-### `search` -- Search stored listings
+### `search` — 搜尋已儲存的物件
 
 ```bash
-# Human-readable table output (default)
+# 人類友善表格輸出（預設）
 tw-rent-radar search --city 高雄市 --max-price 15000
 tw-rent-radar search --district 三民區 --type 整層
 tw-rent-radar search --source 591 --min-price 8000 --max-price 20000
 
-# JSON output
+# JSON 輸出
 tw-rent-radar search --city 高雄市 --max-price 15000 --json
 
-# Select specific fields
+# 指定輸出欄位
 tw-rent-radar search --json --fields title,price,address,url
 ```
 
-### `show` -- View a single listing
+### `show` — 檢視單一物件詳情
 
 ```bash
 tw-rent-radar show 42
 tw-rent-radar show 42 --json
 ```
 
-### `stats` -- Database statistics
+### `stats` — 資料庫統計
 
 ```bash
 tw-rent-radar stats
 tw-rent-radar stats --json
 ```
 
-### `list sources` -- Show supported platforms
+### `list sources` — 顯示支援的平台
 
 ```bash
 tw-rent-radar list sources
 ```
 
-### `db reset` -- Reset the database
+### `db reset` — 重設資料庫
 
 ```bash
 tw-rent-radar db reset
 ```
 
-## For LLM Integration
+## LLM 整合
 
-tw-rent-radar is designed to work as a CLI tool that LLMs can invoke directly, similar to `gh` or `jq`. Every query command supports `--json` for structured output and `--fields` for selecting specific columns.
+tw-rent-radar 設計為可供 LLM 直接呼叫的命令列工具，類似 `gh` 或 `jq`。所有查詢指令支援 `--json` 結構化輸出與 `--fields` 欄位篩選。
 
-### Example workflow
+### 使用範例
 
 ```bash
-# 1. Crawl fresh data
+# 1. 爬取最新資料
 tw-rent-radar crawl 591 --city 高雄市
 
-# 2. Query with structured output
+# 2. 以結構化格式查詢
 tw-rent-radar search --city 高雄市 --max-price 12000 --json --fields title,price,district,url
 
-# 3. Get details on a specific listing
+# 3. 取得特定物件詳情
 tw-rent-radar show 15 --json
 
-# 4. Check what data is available
+# 4. 查看資料庫現有資料
 tw-rent-radar stats --json
 ```
 
-The `--json` output returns a JSON array of objects:
+`--json` 輸出為 JSON 陣列：
 
 ```json
 [
@@ -137,69 +137,69 @@ The `--json` output returns a JSON array of objects:
 ]
 ```
 
-### Data schema
+### 資料結構
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | int | Auto-increment primary key |
-| `source` | string | Platform key (`591`, `rakuya`, `fcrent`, `fb_group`, `fb_market`) |
-| `source_id` | string | Original platform listing ID |
-| `title` | string | Listing title |
-| `price` | int | Monthly rent in NTD |
-| `city` | string | City name (e.g. `高雄市`) |
-| `district` | string | District name (e.g. `三民區`) |
-| `address` | string | Full address |
-| `size` | float | Size in ping (坪) |
-| `rooms` | string | Layout (e.g. `2房1廳1衛`) |
-| `type` | string | Listing type (整層 / 套房 / 雅房) |
-| `floor` | string | Floor info |
-| `contact` | string | Contact name |
-| `phone` | string | Phone number |
-| `url` | string | Original listing URL |
-| `images` | array | Image URLs |
-| `amenities` | array | Amenities list (e.g. `["冷氣", "洗衣機"]`) |
-| `description` | string | Listing description |
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `id` | int | 自動遞增主鍵 |
+| `source` | string | 平台代碼（`591`、`rakuya`、`fcrent`、`fb_group`、`fb_market`） |
+| `source_id` | string | 平台原始物件編號 |
+| `title` | string | 物件標題 |
+| `price` | int | 月租金（新台幣） |
+| `city` | string | 縣市（如 `高雄市`） |
+| `district` | string | 鄉鎮市區（如 `三民區`） |
+| `address` | string | 完整地址 |
+| `size` | float | 坪數 |
+| `rooms` | string | 格局（如 `2房1廳1衛`） |
+| `type` | string | 物件類型（整層住家／獨立套房／雅房） |
+| `floor` | string | 樓層資訊 |
+| `contact` | string | 聯絡人 |
+| `phone` | string | 電話 |
+| `url` | string | 原始物件網址 |
+| `images` | array | 圖片網址陣列 |
+| `amenities` | array | 設備清單（如 `["冷氣", "洗衣機"]`） |
+| `description` | string | 物件描述 |
 
-## Development
+## 開發
 
 ```bash
-# Run unit tests (excludes e2e tests by default)
+# 執行單元測試（預設排除 e2e 測試）
 pytest
 
-# Run e2e tests (hits real websites, requires network)
+# 執行 e2e 測試（連線實際網站，需要網路）
 pytest -m e2e
 
-# Run all tests
+# 執行所有測試
 pytest -m ""
 
-# Lint and format
+# 靜態分析與格式化
 ruff check src/ tests/
 ruff format src/ tests/
 
-# Pre-commit hooks (ruff + pytest, runs automatically on commit)
+# Pre-commit hooks（ruff + pytest，提交時自動執行）
 pre-commit install
 pre-commit run --all-files
 ```
 
-## Project Structure
+## 專案結構
 
 ```
 src/tw_rent_radar/
 ├── __init__.py
-├── cli.py                 # Click CLI entry point
-├── db.py                  # SQLite + SQLAlchemy models
-├── output.py              # Rich tables / JSON formatting
+├── cli.py                 # Click 命令列進入點
+├── db.py                  # SQLite + SQLAlchemy 模型
+├── output.py              # Rich 表格／JSON 格式化輸出
 └── crawlers/
     ├── __init__.py
-    ├── base.py            # Abstract base crawler class
+    ├── base.py            # 爬蟲抽象基底類別
     ├── rent591.py         # 591 租屋網
     ├── rakuya.py          # 樂屋網
     ├── fcrent.py          # 方齊物業
-    ├── fb_auth.py         # Facebook session/cookie management
+    ├── fb_auth.py         # Facebook 連線階段管理
     ├── fb_group.py        # Facebook 租屋社團
     └── fb_market.py       # Facebook Marketplace
 ```
 
-## License
+## 授權條款
 
 MIT
