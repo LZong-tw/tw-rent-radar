@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from .base import BaseCrawler
+
+logger = logging.getLogger(__name__)
 
 CITY_CODES: dict[str, int] = {
     "台北市": 1,

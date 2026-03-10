@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from playwright.async_api import async_playwright
 
 from tw_rent_radar.crawlers.base import BaseCrawler
+
+logger = logging.getLogger(__name__)
 
 # Pattern to extract __NEXT_DATA__ JSON from the page HTML.
 _NEXT_DATA_RE = re.compile(

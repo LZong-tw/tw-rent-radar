@@ -185,10 +185,9 @@ def search(
 
         target = geo_lookup(near)
         if target is None:
-            click.echo(
+            raise click.ClickException(
                 f"Could not geocode '{near}'. Check API keys in ~/.tw-rent-radar/config.json"
             )
-            return
 
         target_lat, target_lng = target
         filtered = []
