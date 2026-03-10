@@ -10,7 +10,7 @@ from pathlib import Path
 
 from playwright.async_api import BrowserContext, Playwright
 
-FB_SESSION_DIR = Path("fb_session")
+FB_SESSION_DIR = Path.home() / ".tw-rent-radar" / "fb_session"
 _STATE_FILE = FB_SESSION_DIR / "state.json"
 
 

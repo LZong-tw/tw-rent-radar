@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from tw_rent_radar.db import Listing, create_tables, get_engine, upsert_listing
+from tw_rent_radar.db import DATA_DIR, Listing, create_tables, get_engine, upsert_listing
 
 
 def test_create_and_insert(tmp_path):
@@ -65,25 +65,29 @@ def test_upsert_deduplicates(tmp_path):
         assert listings[0].price == 18000
 
 
-def test_get_engine_relative_path_uses_cwd(tmp_path, monkeypatch):
-    """get_engine with a relative path creates the DB relative to CWD, not project root.
+def test_get_engine_default_uses_home_dir(monkeypatch, tmp_path):
+    """get_engine with no args defaults to ~/.tw-rent-radar/radar.db.
 
-    This was a real bug: running `tw-rent-radar crawl` from D:\\ created radar.db
-    at D:\\radar.db instead of D:\\tw-rent-radar\\radar.db.
+    Previously it used a relative 'radar.db' which created the DB in CWD —
+    running from D:\\ created D:\\radar.db instead of a consistent location.
     """
-    monkeypatch.chdir(tmp_path)
-    engine = get_engine("radar.db")
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setattr("tw_rent_radar.db.DATA_DIR", fake_home / ".tw-rent-radar")
+    monkeypatch.setattr(
+        "tw_rent_radar.db.DEFAULT_DB_PATH", str(fake_home / ".tw-rent-radar" / "radar.db")
+    )
+    engine = get_engine()
     create_tables(engine)
 
     with Session(engine) as session:
         upsert_listing(session, source="591", source_id="test1", title="Test")
 
-    # DB should be created in CWD (tmp_path), not elsewhere
-    assert (tmp_path / "radar.db").exists()
+    assert (fake_home / ".tw-rent-radar" / "radar.db").exists()
 
 
-def test_get_engine_absolute_path(tmp_path):
-    """get_engine with an absolute path creates the DB at that exact location."""
+def test_get_engine_explicit_path(tmp_path):
+    """get_engine with an explicit path creates the DB at that exact location."""
     db_path = tmp_path / "subdir" / "custom.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine(str(db_path))
@@ -93,3 +97,10 @@ def test_get_engine_absolute_path(tmp_path):
         upsert_listing(session, source="591", source_id="abs1", title="Absolute")
 
     assert db_path.exists()
+
+
+def test_data_dir_points_to_home():
+    """DATA_DIR should be under the user's home directory."""
+    from pathlib import Path
+
+    assert DATA_DIR == Path.home() / ".tw-rent-radar"

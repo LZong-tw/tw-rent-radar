@@ -255,9 +255,12 @@ tw-rent-radar
 - **Region/city code mappings**: 591 and Rakuya use different numeric codes for the same cities. Each crawler maintains its own `REGION_MAP` / `CITY_CODES` dict. These are hardcoded and may need updating if platforms change their codes.
 - **Windows development environment**: This project is developed on Windows (Git Bash). Use forward slashes in paths. The venv activation is `source .venv/Scripts/activate` (not `bin/activate`).
 
-## Working Style
+## Writing Style
 
-- Write everything in English (code, comments, commit messages, docs). Chinese is used only in user-facing strings, test fixtures, and data field values.
+- **Language**: Write everything in English (code, comments, commit messages, docs). Chinese is used only in user-facing strings, test fixtures, and data field values.
+- **Traditional Chinese terminology**: All user-facing Chinese text (README, CLI help, UI strings) MUST use Taiwan Traditional Chinese (zh-TW) terminology, NOT Simplified Chinese or Mainland Chinese terms. Reference: https://github.com/LZong-tw/tw-tech-terminology-converting-prompt — key mappings include: 數據→資料, 數據庫→資料庫, 服務器→伺服器, 應用程序→應用程式, 項目→專案, 文件→檔案, 文檔→文件, 默認→預設, 設置→設定, 支持→支援, 異步→非同步, 線程→執行緒, 接口→介面, 命令行→命令列, 程序→程式.
+
+## Working Style
 - Remove all debugging/inspecting code before committing.
 - **Do NOT run E2E tests locally** unless specifically debugging a crawler against a live site. They are slow, flaky (depend on external websites), and can trigger anti-bot measures. Let CI handle them on manual dispatch.
 - PRs: use `gh` CLI for GitHub operations.

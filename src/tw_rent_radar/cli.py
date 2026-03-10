@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from importlib.metadata import version as pkg_version
 
 import click
 
@@ -22,7 +23,7 @@ from tw_rent_radar.crawlers import (
     RakuyaCrawler,
     Rent591Crawler,
 )
-from tw_rent_radar.db import Listing, create_tables, get_engine, upsert_listing
+from tw_rent_radar.db import DEFAULT_DB_PATH, Listing, create_tables, get_engine, upsert_listing
 from tw_rent_radar.output import format_json, format_table
 
 SOURCES = {
@@ -42,7 +43,7 @@ CRAWLER_MAP: dict = {
     "fb_market": FbMarketCrawler,
 }
 
-DEFAULT_DB = "radar.db"
+DEFAULT_DB = DEFAULT_DB_PATH
 
 console = Console()
 
@@ -72,7 +73,7 @@ def run_crawler(source: str, db_path: str | None, **filters) -> int:
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="tw-rent-radar")
+@click.version_option(version=pkg_version("tw-rent-radar"), prog_name="tw-rent-radar")
 def cli():
     """tw-rent-radar: Multi-platform Taiwan rental listing CLI tool."""
     pass
