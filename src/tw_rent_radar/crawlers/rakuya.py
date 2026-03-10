@@ -186,6 +186,18 @@ class RakuyaCrawler(BaseCrawler):
         if amenities:
             result["amenities"] = json.dumps(amenities, ensure_ascii=False)
 
+        # Extract cooking and gas_type from amenities or info pairs
+        all_content = " ".join(re.sub(r"<[^>]+>", "", content).strip() for _, content in info_pairs)
+        if "天然瓦斯" in all_content:
+            result["gas_type"] = "天然瓦斯"
+        elif "桶裝瓦斯" in all_content:
+            result["gas_type"] = "桶裝瓦斯"
+
+        if "不可開伙" in all_content:
+            result["cooking"] = "不可開伙"
+        elif "可開伙" in all_content:
+            result["cooking"] = "可開伙"
+
         return result
 
     # ------------------------------------------------------------------

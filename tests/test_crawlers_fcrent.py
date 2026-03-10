@@ -131,3 +131,86 @@ class TestParseNextData:
         crawler = FcrentCrawler()
         result = crawler.parse_listing_page(html)
         assert result is None
+
+
+class TestParseCookingGas:
+    """Tests for cooking and gas_type extraction from fcrent listings."""
+
+    def _make_data(self, *, facilities=None, others=None, description_html=""):
+        """Build SAMPLE_NEXT_DATA variant with custom facilities/others."""
+        import copy
+
+        data = copy.deepcopy(SAMPLE_NEXT_DATA)
+        page_props = data["props"]["pageProps"]
+
+        if facilities is not None:
+            fac_ids = []
+            fac_table = []
+            for i, name in enumerate(facilities):
+                fid = f"fac-test-{i}"
+                fac_ids.append(fid)
+                fac_table.append({"id": fid, "name": {"zhTW": name}})
+            page_props["object"]["facility"] = fac_ids
+            page_props["facilities"] = fac_table
+
+        if others is not None:
+            other_ids = []
+            other_table = []
+            for i, name in enumerate(others):
+                oid = f"other-test-{i}"
+                other_ids.append(oid)
+                other_table.append({"id": oid, "name": {"zhTW": name}})
+            page_props["object"]["others"] = other_ids
+            page_props["others"] = other_table
+
+        if description_html:
+            page_props["object"]["contents"] = {"zhTW": [{"data": {"html": description_html}}]}
+
+        return data
+
+    def test_natural_gas_in_facilities(self):
+        data = self._make_data(facilities=["冷氣", "天然瓦斯", "冰箱"])
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["gas_type"] == "天然瓦斯"
+
+    def test_bottled_gas_in_others(self):
+        data = self._make_data(others=["桶裝瓦斯"])
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["gas_type"] == "桶裝瓦斯"
+
+    def test_cooking_allowed_in_others(self):
+        data = self._make_data(others=["可開伙", "近捷運"])
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["cooking"] == "可開伙"
+
+    def test_no_cooking_in_facilities(self):
+        data = self._make_data(facilities=["不可開伙", "冷氣"])
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["cooking"] == "不可開伙"
+
+    def test_cooking_keyword_in_description(self):
+        data = self._make_data(
+            facilities=["冷氣"],
+            description_html="<p>此房可開伙，歡迎來看</p>",
+        )
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["cooking"] == "可開伙"
+
+    def test_no_cooking_no_gas(self):
+        data = self._make_data(facilities=["冷氣", "冰箱"], others=["近捷運"])
+        html = _make_html(data)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["cooking"] is None
+        assert result["gas_type"] is None
+
+    def test_default_sample_has_no_cooking_gas(self):
+        """The original SAMPLE_NEXT_DATA has no cooking/gas keywords."""
+        html = _make_html(SAMPLE_NEXT_DATA)
+        result = FcrentCrawler().parse_listing_page(html)
+        assert result["cooking"] is None
+        assert result["gas_type"] is None

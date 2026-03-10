@@ -103,6 +103,19 @@ class FcrentCrawler(BaseCrawler):
             else:
                 description = ", ".join(other_features)
 
+        # Extract cooking and gas_type from amenities and features.
+        cooking = None
+        gas_type_val = None
+        all_features_text = " ".join(amenities + other_features + [description])
+        if "不可開伙" in all_features_text:
+            cooking = "不可開伙"
+        elif "可開伙" in all_features_text or "開伙" in all_features_text:
+            cooking = "可開伙"
+        if "天然瓦斯" in all_features_text:
+            gas_type_val = "天然瓦斯"
+        elif "桶裝瓦斯" in all_features_text:
+            gas_type_val = "桶裝瓦斯"
+
         # Prefer layout name (e.g. "獨立套房") over building type.
         type_name = type_lookup.get(obj.get("type", ""))
         layout_name = layout_lookup.get(obj.get("layout", ""))
@@ -144,6 +157,8 @@ class FcrentCrawler(BaseCrawler):
             "images": json.dumps(obj.get("picture", []), ensure_ascii=False),
             "description": description or None,
             "amenities": json.dumps(amenities, ensure_ascii=False),
+            "cooking": cooking,
+            "gas_type": gas_type_val,
             "raw_data": json.dumps(obj, ensure_ascii=False),
         }
 

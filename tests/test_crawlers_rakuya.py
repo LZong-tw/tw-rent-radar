@@ -239,6 +239,46 @@ class TestParseDetailPage:
 
 
 # ------------------------------------------------------------------
+# parse_detail_page — cooking & gas_type
+# ------------------------------------------------------------------
+
+
+class TestParseDetailCookingGas:
+    def setup_method(self):
+        self.crawler = RakuyaCrawler()
+
+    def test_gas_in_amenities(self):
+        html = """
+        <span class="list__label">設備</span>
+        <span class="list__content">冷氣, 洗衣機, 天然瓦斯, 冰箱</span>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("gas_type") == "天然瓦斯"
+
+    def test_bottled_gas(self):
+        html = """
+        <span class="list__label">設備</span>
+        <span class="list__content">桶裝瓦斯, 冷氣</span>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("gas_type") == "桶裝瓦斯"
+
+    def test_cooking_in_rules(self):
+        html = """
+        <span class="list__label">規定</span>
+        <span class="list__content">可開伙</span>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("cooking") == "可開伙"
+
+    def test_no_cooking_no_gas(self):
+        html = "<div>No relevant info</div>"
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("cooking") is None
+        assert result.get("gas_type") is None
+
+
+# ------------------------------------------------------------------
 # CITY_CODES
 # ------------------------------------------------------------------
 
