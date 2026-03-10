@@ -118,6 +118,43 @@ def crawl(source, city, group, fetch_details, db_path):
         run_crawler(source, db_path, **filters)
 
 
+def _export_file(dicts: list[dict], path: str, field_list: list[str] | None) -> None:
+    """Export listing dicts to CSV or XLSX file."""
+    import csv
+    from pathlib import Path
+
+    if not dicts:
+        click.echo("No listings to export.")
+        return
+
+    ext = Path(path).suffix.lower()
+    cols = field_list or list(dicts[0].keys())
+
+    if ext == ".csv":
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(dicts)
+        click.echo(f"Exported {len(dicts)} listings to {path}")
+
+    elif ext == ".xlsx":
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            raise click.ClickException("pip install openpyxl  # 需要安裝 openpyxl 才能匯出 Excel")
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Listings"
+        ws.append(cols)
+        for d in dicts:
+            ws.append([d.get(c) for c in cols])
+        wb.save(path)
+        click.echo(f"Exported {len(dicts)} listings to {path}")
+
+    else:
+        raise click.ClickException(f"Unsupported format: {ext} (use .csv or .xlsx)")
+
+
 @cli.command()
 @click.option("--city", default=None, help="Filter by city.")
 @click.option("--district", default=None, help="Filter by district.")
@@ -132,6 +169,7 @@ def crawl(source, city, group, fetch_details, db_path):
 @click.option("--within", type=float, default=None, help="Max distance in km (requires --near).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option("--fields", default=None, help="Comma-separated list of fields to show.")
+@click.option("--output", "output_path", default=None, help="匯出至檔案（支援 .csv 和 .xlsx）")
 @click.option("--db", "db_path", default=DEFAULT_DB, hidden=True)
 def search(
     city: str | None,
@@ -147,6 +185,7 @@ def search(
     within: float | None,
     as_json: bool,
     fields: str | None,
+    output_path: str | None,
     db_path: str,
 ):
     """Search stored rental listings."""
@@ -201,7 +240,9 @@ def search(
                 filtered.append(d)
         dicts = sorted(filtered, key=lambda x: x["distance_km"])
 
-    if as_json:
+    if output_path:
+        _export_file(dicts, output_path, field_list)
+    elif as_json:
         click.echo(format_json(dicts, fields=field_list))
     elif dicts:
         default_cols = ["id", "source", "title", "price", "city", "district"]
