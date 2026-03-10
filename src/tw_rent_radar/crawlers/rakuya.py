@@ -226,7 +226,14 @@ class RakuyaCrawler(BaseCrawler):
             Normalised listing dicts ready for ``upsert_listing``.
         """
         from playwright.async_api import async_playwright
-        from playwright_stealth import stealth_async
+
+        try:
+            from playwright_stealth import stealth_async
+        except ImportError:
+            from playwright_stealth import Stealth
+
+            async def stealth_async(page):  # type: ignore[misc]
+                await Stealth().apply_stealth_async(page)
 
         city: str = filters.get("city", "高雄市")
         city_code = CITY_CODES.get(city, 17)
