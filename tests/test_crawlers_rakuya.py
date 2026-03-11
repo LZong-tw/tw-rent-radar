@@ -271,6 +271,27 @@ class TestParseDetailCookingGas:
         result = self.crawler.parse_detail_page(html)
         assert result.get("cooking") == "可開伙"
 
+    def test_cooking_label_not_allowed(self):
+        html = """
+        <li><span class="list__label">開伙</span><span class="list__content">不可</span></li>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("cooking") == "不可開伙"
+
+    def test_cooking_label_allowed(self):
+        html = """
+        <li><span class="list__label">開伙</span><span class="list__content">可以</span></li>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("cooking") == "可開伙"
+
+    def test_cooking_label_short(self):
+        html = """
+        <li><span class="list__label">開伙</span><span class="list__content">可</span></li>
+        """
+        result = self.crawler.parse_detail_page(html)
+        assert result.get("cooking") == "可開伙"
+
     def test_no_cooking_no_gas(self):
         html = "<div>No relevant info</div>"
         result = self.crawler.parse_detail_page(html)

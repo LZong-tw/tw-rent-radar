@@ -189,17 +189,34 @@ class RakuyaCrawler(BaseCrawler):
         if amenities:
             result["amenities"] = json.dumps(amenities, ensure_ascii=False)
 
-        # Extract cooking and gas_type from amenities or info pairs
-        all_content = " ".join(re.sub(r"<[^>]+>", "", content).strip() for _, content in info_pairs)
-        if "天然瓦斯" in all_content:
-            result["gas_type"] = "天然瓦斯"
-        elif "桶裝瓦斯" in all_content:
-            result["gas_type"] = "桶裝瓦斯"
+        # Extract cooking and gas_type from info pairs
+        for label, content in info_pairs:
+            label_clean = re.sub(r"<[^>]+>", "", label).strip()
+            content_clean = re.sub(r"<[^>]+>", "", content).strip()
+            if label_clean == "開伙":
+                if "不可" in content_clean:
+                    result["cooking"] = "不可開伙"
+                elif content_clean in ("可", "可以"):
+                    result["cooking"] = "可開伙"
+            elif "瓦斯" in label_clean or "瓦斯" in content_clean:
+                if "天然" in content_clean:
+                    result["gas_type"] = "天然瓦斯"
+                elif "桶裝" in content_clean:
+                    result["gas_type"] = "桶裝瓦斯"
 
-        if "不可開伙" in all_content:
-            result["cooking"] = "不可開伙"
-        elif "可開伙" in all_content:
-            result["cooking"] = "可開伙"
+        # Fallback: scan all content for cooking/gas keywords
+        if "cooking" not in result or "gas_type" not in result:
+            all_content = " ".join(re.sub(r"<[^>]+>", "", c).strip() for _, c in info_pairs)
+            if "cooking" not in result:
+                if "不可開伙" in all_content:
+                    result["cooking"] = "不可開伙"
+                elif "可開伙" in all_content:
+                    result["cooking"] = "可開伙"
+            if "gas_type" not in result:
+                if "天然瓦斯" in all_content:
+                    result["gas_type"] = "天然瓦斯"
+                elif "桶裝瓦斯" in all_content:
+                    result["gas_type"] = "桶裝瓦斯"
 
         return result
 
@@ -248,6 +265,7 @@ class RakuyaCrawler(BaseCrawler):
             page = await context.new_page()
             await stealth_async(page)
 
+            # Phase 1: collect card data from list pages.
             for page_num in range(1, max_pages + 1):
                 url = (
                     f"{self.base_url}/rent/rent_search?search=city&city={city_code}&page={page_num}"
@@ -293,15 +311,20 @@ class RakuyaCrawler(BaseCrawler):
                         else (f"{self.base_url}{href}" if href else None),
                     }
 
-                    listing = self.parse_listing_card(card_data)
+                    listings.append(self.parse_listing_card(card_data))
 
-                    if fetch_details and listing["url"]:
+            # Phase 2: fetch detail pages (separate loop to avoid stale handles).
+            if fetch_details:
+                for listing in listings:
+                    if not listing.get("url"):
+                        continue
+                    try:
                         await page.goto(listing["url"], wait_until="networkidle")
                         detail_html = await page.content()
                         detail_data = self.parse_detail_page(detail_html)
                         listing.update({k: v for k, v in detail_data.items() if v is not None})
-
-                    listings.append(listing)
+                    except Exception:  # noqa: BLE001
+                        logger.warning("Failed to fetch detail: %s", listing["url"])
 
             await browser.close()
 

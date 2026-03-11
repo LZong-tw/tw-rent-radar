@@ -76,9 +76,12 @@ def run_crawler(source: str, db_path: str | None, **filters) -> int:
     engine = get_engine(db_path)
     create_tables(engine)
 
+    from tw_rent_radar.crawlers.base import enrich_listing
+
     count = 0
     with Session(engine) as session:
         for item in listings:
+            enrich_listing(item)
             result = upsert_listing(session, **item)
             geocode_listing(session, result.id)
             count += 1
@@ -215,9 +218,9 @@ def search(
         if source:
             query = query.filter(Listing.source == source)
         if cooking:
-            query = query.filter(Listing.cooking == cooking)
+            query = query.filter((Listing.cooking == cooking) | (Listing.cooking.is_(None)))
         if gas_type:
-            query = query.filter(Listing.gas_type == gas_type)
+            query = query.filter((Listing.gas_type == gas_type) | (Listing.gas_type.is_(None)))
 
         listings = query.all()
         field_list = fields.split(",") if fields else None
