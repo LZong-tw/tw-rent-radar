@@ -76,14 +76,42 @@ _JS_EXTRACT_POSTS = r"""() => {
         if (seen.has(hash)) continue;
         seen.add(hash);
 
-        // Permalink
+        // Permalink — try multiple strategies
         let permalink = null;
         const allLinks = article.querySelectorAll('a[href]');
+
+        // Strategy 1: Explicit /posts/ or /permalink/ links
         for (const a of allLinks) {
             const h = a.href || '';
             if ((h.includes('/posts/') || h.includes('/permalink/')) && h.includes('/groups/')) {
                 permalink = h.split('?')[0];
                 break;
+            }
+        }
+
+        // Strategy 2: Any group sub-link (e.g. /groups/lvmh3/12345678/)
+        // but exclude admin pages like /members, /about, /media, /files, /events
+        if (!permalink) {
+            const skip = ['/members', '/about', '/media', '/files', '/events', '/admin', '/search'];
+            for (const a of allLinks) {
+                const h = a.href || '';
+                // Must have /groups/<slug>/<something_else>
+                const m = h.match(/\/groups\/[^/?#]+\/([^/?#]+)/);
+                if (m && !skip.some(s => h.includes(s))) {
+                    permalink = h.split('?')[0];
+                    break;
+                }
+            }
+        }
+
+        // Strategy 3: story.php or story_fbid links
+        if (!permalink) {
+            for (const a of allLinks) {
+                const h = a.href || '';
+                if (h.includes('story.php') || h.includes('story_fbid')) {
+                    permalink = h.split('&__cft__')[0];
+                    break;
+                }
             }
         }
 
