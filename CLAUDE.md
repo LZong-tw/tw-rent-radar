@@ -37,19 +37,19 @@ tw-rent-radar/
     geo.py                          # TGOS + Google Maps geocoding, Haversine distance
     crawlers/
       __init__.py                   # Re-exports all crawler classes
-      base.py                       # BaseCrawler ABC (source_name, async crawl())
+      base.py                       # BaseCrawler ABC + text inference (infer_cooking, infer_gas, enrich_listing)
       rent591.py                    # 591 crawler: Playwright + CSRF token + API pagination
       rakuya.py                     # Rakuya crawler: Playwright + stealth + HTML parsing
       fcrent.py                     # fcrent crawler: Playwright + __NEXT_DATA__ JSON extraction
       fb_auth.py                    # Facebook session management (manual login, state persistence)
-      fb_group.py                   # Facebook Group crawler (skeleton + price parser)
-      fb_market.py                  # Facebook Marketplace crawler (skeleton)
+      fb_group.py                   # Facebook Group crawler (skeleton — crawl logic not yet integrated)
+      fb_market.py                  # Facebook Marketplace crawler (fully implemented)
   tests/
-    test_crawlers_base.py           # BaseCrawler ABC contract tests
+    test_crawlers_base.py           # BaseCrawler ABC + text inference (infer_cooking, infer_gas, enrich_listing)
     test_crawlers_591.py            # 591 parse_list_item, parse_price, region map
     test_crawlers_rakuya.py         # Rakuya parse_price, parse_size, parse_listing_card, parse_detail_page
     test_crawlers_fcrent.py         # fcrent parse_listing_page with mock __NEXT_DATA__
-    test_crawlers_fb.py             # Facebook crawlers: source names, price parsing, crawl skeletons
+    test_crawlers_fb.py             # Facebook crawlers: source names, price parsing, card parsing
     test_db.py                      # SQLite create/insert/upsert deduplication
     test_cli.py                     # CLI smoke tests (help, search, stats, list sources)
     test_output.py                  # JSON + Rich table formatting
@@ -82,8 +82,14 @@ tw-rent-radar --help
 tw-rent-radar crawl 591 --city "高雄市"
 tw-rent-radar crawl rakuya --city "台北市"
 tw-rent-radar crawl all
+tw-rent-radar crawl fb_market --city "高雄市"
 tw-rent-radar search --city "高雄市" --max-price 15000
+tw-rent-radar search --cooking "可開伙" --gas-type "天然瓦斯"
+tw-rent-radar search --near "高雄軟體園區" --within 3
+tw-rent-radar search --near "高雄軟體園區" --near "健身工廠" --near-mode all --within 3
 tw-rent-radar search --json --fields "title,price,city"
+tw-rent-radar search --output results.xlsx --fields "title,price,city,district"
+tw-rent-radar search --output results.csv
 tw-rent-radar show 1
 tw-rent-radar stats --json
 tw-rent-radar list sources
@@ -164,45 +170,71 @@ The `Listing` model in `db.py` is the single source of truth for all crawled dat
 ```
 Rental Websites ──► Playwright (headless browser) ──► Crawler parsers ──► Listing dicts
                                                                               │
+                                                                      enrich_listing()   ◄── text inference (cooking/gas from title/description)
+                                                                              │
                                                                      upsert_listing()
                                                                               │
                                                                         SQLite (radar.db)
                                                                               │
+                                                                      geocode()          ◄── Google Maps Geocoding API
+                                                                              │
                                                                     CLI search/show/stats
                                                                               │
-                                                                   Rich table / JSON output
+                                                                   Rich table / JSON / CSV / XLSX
 ```
 
 ### Crawler Architecture
 
 All crawlers inherit from `BaseCrawler` (ABC) and implement `async crawl(**filters) -> list[dict]`.
 
-| Crawler          | Platform         | Strategy                                           |
-|----------------- |----------------- |--------------------------------------------------- |
-| `Rent591Crawler` | 591 租屋網       | Playwright + CSRF token + XHR API calls, paginated |
-| `RakuyaCrawler`  | 樂屋網           | Playwright + stealth mode, HTML card parsing       |
-| `FcrentCrawler`  | 方齊物業         | Playwright + `__NEXT_DATA__` JSON from Next.js SSR |
-| `FbGroupCrawler` | Facebook 社團    | Skeleton (price parser implemented)                |
-| `FbMarketCrawler`| Facebook 市集    | Skeleton                                           |
+| Crawler          | Platform         | Strategy                                           | Status |
+|----------------- |----------------- |--------------------------------------------------- |--------|
+| `Rent591Crawler` | 591 租屋網       | Playwright + CSRF token + XHR API calls, paginated | Done   |
+| `RakuyaCrawler`  | 樂屋網           | Playwright + stealth, two-phase crawl (cards then detail pages) | Done |
+| `FcrentCrawler`  | 方齊物業         | Playwright + `__NEXT_DATA__` JSON from Next.js SSR | Done   |
+| `FbGroupCrawler` | Facebook 社團    | Skeleton — crawl logic prototyped but not integrated into class | WIP |
+| `FbMarketCrawler`| Facebook 市集    | Playwright + stealth, `a[href*="/marketplace/item/"]` extraction | Done |
 
 ### Anti-Bot Strategies
 
 - **591**: Uses Playwright to obtain CSRF token from the page, then makes API calls with that token via `page.evaluate(fetch)`. Region is set via cookie.
 - **Rakuya**: Uses `playwright-stealth` to bypass Cloudflare Turnstile. Launches with `headless=False` to avoid detection.
 - **fcrent**: Simple Playwright navigation — no significant anti-bot protection. Extracts structured data from Next.js `__NEXT_DATA__` script tag.
-- **Facebook**: Uses saved browser session state (`fb_session/state.json`) with manual login fallback. Not yet fully implemented.
+- **Facebook**: Uses saved browser session state (`fb_session/state.json`) with manual login fallback via `ensure_fb_session()`. FB Marketplace crawler is functional. FB Group crawler prototyped but not integrated.
+
+### Text Inference Pipeline
+
+`base.py` provides `infer_cooking()`, `infer_gas()`, and `enrich_listing()` to extract cooking/gas info from free text when structured fields are missing.
+
+- **`infer_cooking(text)`**: Regex-based. Checks negative patterns first (`不可開伙`, `禁止開伙`, etc.) then positive (`可開伙`, `有廚房`, etc.). Returns `"可開伙"`, `"不可開伙"`, or `None`.
+- **`infer_gas(text)`**: Checks for `天然瓦斯`/`天然氣` or `桶裝瓦斯`/`液化瓦斯`.
+- **`enrich_listing(listing)`**: Scans `title`, `description`, `amenities` fields. Only fills `cooking`/`gas_type` if not already set. Called in CLI crawl pipeline before `upsert_listing()`.
+
+### NULL-Preserving Filter Logic
+
+When filtering by `--cooking` or `--gas-type`, NULL values are preserved (not filtered out). NULL means "unknown", not "not allowed". The query uses `(Listing.cooking == value) | (Listing.cooking.is_(None))`.
+
+### Rakuya Two-Phase Crawl
+
+Rakuya crawl uses two separate loops to prevent stale DOM element handles:
+1. **Phase 1**: Visit all list pages, extract card data into plain dicts
+2. **Phase 2**: Visit detail pages using the collected URLs (only if `--fetch-details`)
+
+This prevents `ElementHandle` errors that occur when navigating away from the page that created the handles.
 
 ### CLI Structure (Click)
 
 ```
 tw-rent-radar
-  ├── crawl <source|all>    # Crawl and store listings (--fetch-details for detail pages)
-  ├── search                # Query with filters (--near, --within, --cooking, --gas-type)
+  ├── crawl <source|all>    # Crawl and store listings (--city, --fetch-details, --group)
+  ├── search                # Query with filters (see below)
   ├── show <id>             # Display single listing details
   ├── stats                 # Show listing counts by source
   ├── list sources          # List supported platforms
   └── db reset              # Delete all stored data
 ```
+
+**Search filters**: `--city`, `--district`, `--max-price`, `--min-price`, `--rooms`, `--type`, `--source`, `--cooking`, `--gas-type`, `--near` (repeatable), `--near-mode all|any`, `--within` (km), `--json`, `--fields`, `--output` (.csv/.xlsx)
 
 ## How to Add a New Crawler
 
@@ -258,10 +290,18 @@ tw-rent-radar
 - **Facebook session**: Facebook crawlers require manual login. The session state is saved to `fb_session/state.json` and reused. If the session expires, the user is prompted to log in again via a visible browser window.
 - **SQLite JSON fields**: `images`, `amenities`, and `raw_data` are stored as JSON strings in `Text` columns. Always `json.dumps()` before storing and `json.loads()` when reading. The `Listing.to_dict()` method handles this automatically.
 - **Price parsing varies by platform**: Each crawler has its own `parse_price()` because platforms format prices differently (e.g., "15,000 元/月", "25,000元", "$8000", "面議"). Always return `None` for unparseable/negotiable prices.
+- **Rakuya city codes are 0-indexed**: `CITY_CODES` maps 台北市=0, 高雄市=15, 屏東縣=17, etc. This was a past bug — originally 1-indexed (高雄市=17 was actually fetching 屏東縣 data). Verify city codes by checking listing addresses in results.
+- **Rakuya cooking label format**: Detail page HTML uses `<span class="list__label">開伙</span><span class="list__content">不可</span>`. The content is just "不可"/"可"/"可以", NOT "不可開伙"/"可開伙". The parser handles this by checking the label name then interpreting the short content value.
 - **Region/city code mappings**: 591 and Rakuya use different numeric codes for the same cities. Each crawler maintains its own `REGION_MAP` / `CITY_CODES` dict. These are hardcoded and may need updating if platforms change their codes.
 - **Windows development environment**: This project is developed on Windows (Git Bash). Use forward slashes in paths. The venv activation is `source .venv/Scripts/activate` (not `bin/activate`).
-- **Geocoding API keys**: TGOS requires registration at https://www.tgos.tw/. Google Maps requires API key from Google Cloud Console. Configure keys in `~/.tw-rent-radar/config.json` (`tgos_app_id`, `tgos_api_key`, `google_api_key`) or as environment variables (`TGOS_APP_ID`, `TGOS_API_KEY`, `GOOGLE_MAPS_API_KEY`). Without keys, geocoding is skipped and `--near` search is unavailable.
+- **Geocoding API keys**: TGOS "全國門牌位置比對服務" does NOT allow individual registration (only 政府機關/公司行號). Use **Google Maps Geocoding API** instead — get an API key from Google Cloud Console. Configure in `~/.tw-rent-radar/config.json` (`google_api_key`) or as environment variable (`GOOGLE_MAPS_API_KEY`). Without keys, geocoding is skipped and `--near` search is unavailable.
 - **591 detail page rate limiting**: Fetching detail pages (`--fetch-details`) is slower — each listing requires a separate page load. Too-fast requests may trigger anti-bot measures that return randomized data.
+- **FB Marketplace data quality**: Kaohsiung "propertyrentals" category returns 100% property sales (prices in millions), zero actual rentals. This is a platform data quality issue, not a code bug.
+- **FB Group crawl approach**: Posts are in `div[dir="auto"]` elements. Must click "查看更多" (See more) buttons to expand truncated text. `[role="article"]` catches some but not all posts. Known accessible groups: "5911高雄租屋" at `/groups/lvmh3/` (public, 14.8萬 members).
+- **Multi-point --near**: `--near` accepts multiple values. `--near-mode all` (default) requires proximity to ALL points; `--near-mode any` requires proximity to at least one. Distance columns: single point → `distance_km`, multiple points → `dist_1`, `dist_2`, etc. plus `distance_km` = min.
+- **--near requires lat/lng fields**: When `--fields` is specified with `--near`, latitude/longitude are automatically included in the query even if not in the field list. Without this, all listings get filtered out.
+- **591 browsenum_all as freshness indicator**: The `browsenum_all` field in `raw_data` JSON indicates total views. >200 views suggests a long-listed/stale listing. fcrent has native date fields showing actual listing age.
+- **fcrent listing staleness**: fcrent listings can be very old (748+ days). Check platform-native dates in raw_data for freshness.
 
 ## Writing Style
 
