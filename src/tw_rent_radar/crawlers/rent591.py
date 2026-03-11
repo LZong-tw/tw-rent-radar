@@ -253,19 +253,29 @@ class Rent591Crawler(BaseCrawler):
             "raw_data": json.dumps(item, ensure_ascii=False),
         }
 
+    # JavaScript to read total listing count from the Nuxt Pinia store.
+    _EXTRACT_TOTAL_JS = """() => {
+        const n = window.__NUXT__;
+        if (!n || !n.pinia || !n.pinia['rent-list']) return 0;
+        return n.pinia['rent-list'].total || 0;
+    }"""
+
     async def crawl(self, **filters) -> list[dict]:
         """Crawl 591 listings by navigating the Nuxt SSR list pages.
 
         Keyword arguments:
             city: str -- City name in Chinese (default: "台北市")
-            max_pages: int -- Maximum number of pages to crawl (default: 5)
-            fetch_details: bool -- Visit each detail page for extra fields (default: False)
+            max_pages: int -- Maximum pages to crawl.  ``0`` (default)
+                means *all* pages (auto-detected from the store's ``total``).
+            fetch_details: bool -- Visit each detail page for extra fields
+                (default: False)
         """
         city = filters.get("city", "台北市")
-        max_pages = filters.get("max_pages", 5)
+        max_pages = int(filters.get("max_pages", 0))
         fetch_details = filters.get("fetch_details", False)
         region_id = REGION_MAP.get(city, 1)
 
+        per_page = 30  # 591 returns 30 items per page
         results: list[dict] = []
 
         async with async_playwright() as p:
@@ -285,19 +295,29 @@ class Rent591Crawler(BaseCrawler):
             )
 
             page = await context.new_page()
+            total_pages = max_pages or 999  # will be refined after first page
 
-            for page_num in range(1, max_pages + 1):
+            page_num = 0
+            while page_num < total_pages:
+                page_num += 1
                 list_url = f"{self.list_base_url}?region={region_id}"
                 if page_num > 1:
                     list_url += f"&page={page_num}"
 
-                logger.info("Fetching page %d: %s", page_num, list_url)
+                logger.info("Fetching page %d/%s: %s", page_num, total_pages, list_url)
 
                 try:
                     await page.goto(list_url, wait_until="networkidle", timeout=30000)
                 except Exception:  # noqa: BLE001
                     logger.warning("Page load failed for page %d", page_num)
                     break
+
+                # On first page, read total count to compute actual page limit.
+                if page_num == 1 and max_pages == 0:
+                    total = await page.evaluate(self._EXTRACT_TOTAL_JS)
+                    if total and total > 0:
+                        total_pages = (total + per_page - 1) // per_page
+                        logger.info("Total listings: %d (%d pages)", total, total_pages)
 
                 # Extract listing data from the Nuxt SSR payload
                 items = await page.evaluate(_EXTRACT_LISTINGS_JS)
