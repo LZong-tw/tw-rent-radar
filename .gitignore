@@ -132,3 +132,4 @@ dmypy.json
 # tw-rent-radar
 radar.db
 fb_session/
+*.xlsx

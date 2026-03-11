@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from tw_rent_radar.db import DATA_DIR, Listing, create_tables, get_engine, upsert_listing
+from tw_rent_radar.db import CONFIG_DIR, Listing, create_tables, get_engine, upsert_listing
 
 
 def test_create_and_insert(tmp_path):
@@ -68,22 +68,18 @@ def test_upsert_deduplicates(tmp_path):
 def test_get_engine_default_uses_home_dir(monkeypatch, tmp_path):
     """get_engine with no args defaults to ~/.tw-rent-radar/radar.db.
 
-    Previously it used a relative 'radar.db' which created the DB in CWD —
-    running from D:\\ created D:\\radar.db instead of a consistent location.
+    Previously it used ~/.tw-rent-radar/radar.db — now it uses CWD/radar.db.
     """
-    fake_home = tmp_path / "fakehome"
-    fake_home.mkdir()
-    monkeypatch.setattr("tw_rent_radar.db.DATA_DIR", fake_home / ".tw-rent-radar")
-    monkeypatch.setattr(
-        "tw_rent_radar.db.DEFAULT_DB_PATH", str(fake_home / ".tw-rent-radar" / "radar.db")
-    )
+    fake_cwd = tmp_path / "fakecwd"
+    fake_cwd.mkdir()
+    monkeypatch.setattr("tw_rent_radar.db.DEFAULT_DB_PATH", str(fake_cwd / "radar.db"))
     engine = get_engine()
     create_tables(engine)
 
     with Session(engine) as session:
         upsert_listing(session, source="591", source_id="test1", title="Test")
 
-    assert (fake_home / ".tw-rent-radar" / "radar.db").exists()
+    assert (fake_cwd / "radar.db").exists()
 
 
 def test_get_engine_explicit_path(tmp_path):
@@ -99,11 +95,11 @@ def test_get_engine_explicit_path(tmp_path):
     assert db_path.exists()
 
 
-def test_data_dir_points_to_home():
-    """DATA_DIR should be under the user's home directory."""
+def test_config_dir_points_to_home():
+    """CONFIG_DIR should be under the user's home directory."""
     from pathlib import Path
 
-    assert DATA_DIR == Path.home() / ".tw-rent-radar"
+    assert CONFIG_DIR == Path.home() / ".tw-rent-radar"
 
 
 def test_listing_has_geo_and_detail_columns(tmp_path):

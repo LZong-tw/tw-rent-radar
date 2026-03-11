@@ -19,9 +19,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-# Default data directory: ~/.tw-rent-radar/
-DATA_DIR = Path.home() / ".tw-rent-radar"
-DEFAULT_DB_PATH = str(DATA_DIR / "radar.db")
+# Config directory for API keys etc.
+CONFIG_DIR = Path.home() / ".tw-rent-radar"
+
+# Default database location: current working directory / radar.db
+DEFAULT_DB_PATH = str(Path.cwd() / "radar.db")
 
 
 class Base(DeclarativeBase):
@@ -83,12 +85,10 @@ class Listing(Base):
 def get_engine(db_path: str | None = None):
     """Create a SQLAlchemy engine for the given SQLite database path.
 
-    Defaults to ~/.tw-rent-radar/radar.db so the DB location is consistent
-    regardless of the working directory.
+    Defaults to ./radar.db in the current working directory.
     """
     if db_path is None:
         db_path = DEFAULT_DB_PATH
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
     return _create_engine(f"sqlite:///{db_path}", echo=False)
 
 

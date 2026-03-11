@@ -139,6 +139,34 @@ def test_parse_post_fallback_url():
     assert result["url"] == "https://www.facebook.com/groups/lvmh3"
 
 
+def test_parse_post_uses_permalink_when_present():
+    """When permalink is available, it should be used instead of group_url."""
+    crawler = FbGroupCrawler()
+    post = {
+        "text": "套房出租 8,000元/月",
+        "permalink": "https://www.facebook.com/groups/lvmh3/posts/123456789",
+        "imgSrcs": [],
+        "poster": None,
+    }
+    result = crawler.parse_post(post, "高雄市", group_url="https://www.facebook.com/groups/lvmh3")
+    assert result["url"] == "https://www.facebook.com/groups/lvmh3/posts/123456789"
+
+
+def test_parse_post_permalink_not_group_url():
+    """Post URL should not be the bare group URL when permalink exists."""
+    crawler = FbGroupCrawler()
+    group_url = "https://www.facebook.com/groups/lvmh3"
+    post = {
+        "text": "三民區 獨立套房\n租金：9500\n近高雄車站",
+        "permalink": "https://www.facebook.com/groups/lvmh3/posts/9876543210",
+        "imgSrcs": [],
+        "poster": "某房東",
+    }
+    result = crawler.parse_post(post, "高雄市", group_url=group_url)
+    assert result["url"] != group_url
+    assert "/posts/" in result["url"]
+
+
 def test_generate_source_id_stable():
     """Same text should produce the same source ID."""
     text = "三民區套房出租月租12000"

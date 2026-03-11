@@ -10,11 +10,11 @@ import re
 
 import requests
 
-from tw_rent_radar.db import DATA_DIR
+from tw_rent_radar.db import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = DATA_DIR / "config.json"
+CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
 def get_config() -> dict:
