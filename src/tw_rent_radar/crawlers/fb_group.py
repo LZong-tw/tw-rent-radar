@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _NUM = r"(\d{1,3}(?:,\d{3})+|\d+)"  # comma-formatted or plain integer
 
 _PRICE_PATTERNS: list[re.Pattern[str]] = [
+    # "租金：12000", "租  金：9500", "【租金】：9500"
+    re.compile(r"租\s*金[】\]）)]*[：:\s]*" + _NUM),
     # "12,000元/月", "12,000 元", "12000元"
     re.compile(_NUM + r"\s*元"),
     # "月租：12000", "月租 12,000"
@@ -30,68 +32,71 @@ GROUP_SLUGS: dict[str, str] = {
     "5911高雄租屋": "lvmh3",
 }
 
-# JavaScript to extract post text from the group page.
-# Uses div[dir="auto"] which captures post body text reliably.
+# JavaScript to extract post text from the group feed.
+# Uses [role="feed"] > children to get top-level posts, excluding nested comments.
 _JS_EXTRACT_POSTS = r"""() => {
     const posts = [];
     const seen = new Set();
-    // Each post is typically a div with role="article" or inside one
-    const articles = document.querySelectorAll('[role="article"]');
-    for (const article of articles) {
-        // Get all text blocks within the article
+    const feed = document.querySelector('[role="feed"]');
+    if (!feed) return posts;
+
+    for (const child of feed.children) {
+        const article = child.querySelector('[role="article"]') || child;
+
+        // Identify comment elements to exclude their text
+        const commentEls = new Set();
+        const innerArticles = article.querySelectorAll('[role="article"]');
+        innerArticles.forEach(inner => {
+            let isNested = false;
+            let p = inner.parentElement;
+            while (p && p !== article) {
+                if (p.getAttribute && p.getAttribute('role') === 'article') {
+                    isNested = true;
+                    break;
+                }
+                p = p.parentElement;
+            }
+            if (isNested) {
+                inner.querySelectorAll('div[dir="auto"]').forEach(el => commentEls.add(el));
+            }
+        });
+
         const textEls = article.querySelectorAll('div[dir="auto"]');
         const textParts = [];
         for (const el of textEls) {
+            if (commentEls.has(el)) continue;
             const t = el.innerText.trim();
-            if (t && t.length > 5) textParts.push(t);
+            if (t && t.length > 3) textParts.push(t);
         }
         const fullText = textParts.join('\n');
         if (!fullText || fullText.length < 10) continue;
 
-        // Deduplicate by content hash
         const hash = fullText.substring(0, 100);
         if (seen.has(hash)) continue;
         seen.add(hash);
 
-        // Try to find a permalink
-        const links = article.querySelectorAll('a[href*="/groups/"]');
+        // Permalink
         let permalink = null;
-        for (const a of links) {
-            if (a.href.includes('/posts/') || a.href.includes('/permalink/')) {
-                permalink = a.href.split('?')[0];
+        const allLinks = article.querySelectorAll('a[href]');
+        for (const a of allLinks) {
+            const h = a.href || '';
+            if ((h.includes('/posts/') || h.includes('/permalink/')) && h.includes('/groups/')) {
+                permalink = h.split('?')[0];
                 break;
             }
         }
 
-        // Try to find images
+        // Images (from post, not comments)
         const imgs = article.querySelectorAll('img[src*="scontent"]');
         const imgSrcs = Array.from(imgs).map(i => i.src).filter(s => s);
 
-        // Get poster name (usually first link with role or strong text)
-        const nameEl = article.querySelector('strong') || article.querySelector('h3 a');
+        // Poster name
+        const nameEl = article.querySelector('strong');
         const poster = nameEl ? nameEl.innerText.trim() : null;
 
         posts.push({ text: fullText, permalink, imgSrcs, poster });
     }
     return posts;
-}"""
-
-# Fallback: if [role="article"] yields too few results, extract div[dir="auto"] directly.
-_JS_EXTRACT_TEXTS = r"""() => {
-    const results = [];
-    const seen = new Set();
-    const els = document.querySelectorAll('div[dir="auto"]');
-    for (const el of els) {
-        const t = el.innerText.trim();
-        if (t && t.length > 30) {
-            const hash = t.substring(0, 100);
-            if (!seen.has(hash)) {
-                seen.add(hash);
-                results.push(t);
-            }
-        }
-    }
-    return results;
 }"""
 
 
@@ -143,6 +148,11 @@ class FbGroupCrawler(BaseCrawler):
         """
         text = post_data.get("text", "")
         if not text:
+            return None
+
+        # Skip "求租" (looking to rent) posts — they are not rental listings.
+        first_line = text.split("\n")[0] if text else ""
+        if re.search(r"求租|徵室友|找室友|找房", first_line):
             return None
 
         price = self.parse_price_from_text(text)
@@ -247,48 +257,23 @@ class FbGroupCrawler(BaseCrawler):
             page = await context.new_page()
 
             await page.goto(group_url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
-            # Click "查看更多" (See more) buttons to expand truncated posts.
-            for _ in range(3):
-                see_more = page.locator('div[role="button"]:has-text("查看更多")')
-                count = await see_more.count()
-                for i in range(count):
-                    try:
-                        await see_more.nth(i).click(timeout=2000)
-                        await asyncio.sleep(0.3)
-                    except Exception:  # noqa: BLE001
-                        pass
-
-            # Scroll to load more posts.
+            # Scroll to load more posts, clicking expand buttons periodically.
             for i in range(scroll_count):
                 await page.evaluate("window.scrollBy(0, 2000)")
                 await asyncio.sleep(1.5)
 
-                # Periodically click "查看更多" on newly loaded posts.
-                if (i + 1) % 5 == 0:
-                    see_more = page.locator('div[role="button"]:has-text("查看更多")')
-                    count = await see_more.count()
-                    for j in range(count):
-                        try:
-                            await see_more.nth(j).click(timeout=2000)
-                            await asyncio.sleep(0.3)
-                        except Exception:  # noqa: BLE001
-                            pass
+                if (i + 1) % 3 == 0:
+                    await self._click_expand_buttons(page)
 
-            # Extract posts using article-based approach first.
+            # Final round of clicking expand buttons.
+            await self._click_expand_buttons(page)
+            await asyncio.sleep(1)
+
+            # Extract posts from the feed.
             posts = await page.evaluate(_JS_EXTRACT_POSTS)
-            logger.info("Extracted %d posts via [role=article]", len(posts))
-
-            # Fallback: if article-based extraction yields too few, use text-based.
-            if len(posts) < 3:
-                texts = await page.evaluate(_JS_EXTRACT_TEXTS)
-                logger.info("Fallback: extracted %d text blocks via div[dir=auto]", len(texts))
-                for text in texts:
-                    # Avoid duplicating posts already found via articles.
-                    if any(text[:80] in p.get("text", "")[:80] for p in posts):
-                        continue
-                    posts.append({"text": text, "permalink": None, "imgSrcs": [], "poster": None})
+            logger.info("Extracted %d posts from feed", len(posts))
 
             listings = []
             seen_ids: set[str] = set()
@@ -302,3 +287,29 @@ class FbGroupCrawler(BaseCrawler):
             await context.browser.close()
 
         return listings
+
+    @staticmethod
+    async def _click_expand_buttons(page) -> None:
+        """Click all 'See more' / '查看更多' / '顯示更多' buttons on the page.
+
+        Facebook uses various element types for expand buttons.  We use JS
+        to find clickable elements by text content rather than relying on
+        a specific ``role`` attribute.
+        """
+        await page.evaluate(r"""() => {
+            const labels = ['查看更多', '顯示更多'];
+            // Check spans, divs with role=button, and generic clickable elements
+            const candidates = document.querySelectorAll(
+                'div[role="button"], span[role="button"], [role="button"], span, div'
+            );
+            for (const el of candidates) {
+                const text = el.innerText.trim();
+                if (labels.some(l => text === l || text === '…… ' + l)) {
+                    // Only click small elements (the button itself, not a large container)
+                    if (el.offsetHeight < 50 && el.offsetWidth < 200) {
+                        el.click();
+                    }
+                }
+            }
+        }""")
+        await asyncio.sleep(0.5)

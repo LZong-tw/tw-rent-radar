@@ -70,6 +70,14 @@ def test_parse_price_filters_unreasonable():
     assert crawler.parse_price_from_text("售價3,500,000元") is None
 
 
+def test_parse_price_rent_label():
+    """租金 label with various spacing and punctuation."""
+    crawler = FbGroupCrawler()
+    assert crawler.parse_price_from_text("【租金】：9500") == 9500
+    assert crawler.parse_price_from_text("租  金：12,000") == 12000
+    assert crawler.parse_price_from_text("租金:8000元/月") == 8000
+
+
 # ------------------------------------------------------------------
 # Post parsing (FbGroupCrawler)
 # ------------------------------------------------------------------
@@ -106,6 +114,21 @@ def test_parse_post_empty_text_returns_none():
     crawler = FbGroupCrawler()
     assert crawler.parse_post({"text": ""}, "高雄市") is None
     assert crawler.parse_post({"text": None}, "高雄市") is None
+
+
+def test_parse_post_skips_looking_to_rent():
+    """Posts starting with 求租/徵室友 should be filtered out."""
+    crawler = FbGroupCrawler()
+    post = {
+        "text": "#求租\n【租金】：5000～8000\n三民區",
+        "permalink": None,
+        "imgSrcs": [],
+        "poster": None,
+    }
+    assert crawler.parse_post(post, "高雄市") is None
+
+    post2 = {"text": "徵室友 月租 6000", "permalink": None, "imgSrcs": [], "poster": None}
+    assert crawler.parse_post(post2, "高雄市") is None
 
 
 def test_parse_post_fallback_url():
