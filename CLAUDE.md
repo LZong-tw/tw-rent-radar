@@ -192,7 +192,7 @@ All crawlers inherit from `BaseCrawler` (ABC) and implement `async crawl(**filte
 | `Rent591Crawler` | 591 租屋網       | Playwright + CSRF token + XHR API calls, paginated | Done   |
 | `RakuyaCrawler`  | 樂屋網           | Playwright + stealth, two-phase crawl (cards then detail pages) | Done |
 | `FcrentCrawler`  | 方齊物業         | Playwright + `__NEXT_DATA__` JSON from Next.js SSR | Done   |
-| `FbGroupCrawler` | Facebook 社團    | Skeleton — crawl logic prototyped but not integrated into class | WIP |
+| `FbGroupCrawler` | Facebook 社團    | Playwright + GraphQL interception for post IDs, DOM text extraction | Done |
 | `FbMarketCrawler`| Facebook 市集    | Playwright + stealth, `a[href*="/marketplace/item/"]` extraction | Done |
 
 ### Anti-Bot Strategies
@@ -302,6 +302,9 @@ tw-rent-radar
 - **--near requires lat/lng fields**: When `--fields` is specified with `--near`, latitude/longitude are automatically included in the query even if not in the field list. Without this, all listings get filtered out.
 - **591 browsenum_all as freshness indicator**: The `browsenum_all` field in `raw_data` JSON indicates total views. >200 views suggests a long-listed/stale listing. fcrent has native date fields showing actual listing age.
 - **fcrent listing staleness**: fcrent listings can be very old (748+ days). Check platform-native dates in raw_data for freshness.
+- **591 pagination coverage**: 591 has ~6500 listings per city (e.g. Kaohsiung = 217 pages × 30/page). The crawler defaults to `max_pages=0` which auto-detects total from the Nuxt store's `total` field and crawls all pages. Never hardcode a small page limit — it silently drops most listings.
+- **Vue reactive proxy serialization**: Nuxt Pinia store fields (e.g. `total`) may be Vue reactive proxies. Returning them directly from `page.evaluate()` causes "Cannot serialize result: object reference chain is too long". Always coerce to primitive with `Number(t)` or `typeof t === 'number' ? t : Number(t) || 0` before returning.
+- **FB Group permalinks not in DOM**: Facebook's modern UI does NOT render permalink `<a>` tags for group posts. Must intercept GraphQL API responses during scrolling to extract `post_id`, then match with DOM-extracted text by similarity. See `_extract_post_ids_from_graphql()` and `_match_permalinks()` in `fb_group.py`.
 
 ## Writing Style
 
