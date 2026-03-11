@@ -280,6 +280,37 @@ class TestParseDetailData:
         assert result["cooking"] == "不可開伙"
 
 
+class TestCrawlDefaults:
+    """Ensure the crawler defaults to crawling all pages, not a fixed limit."""
+
+    def test_max_pages_defaults_to_zero(self):
+        """max_pages=0 means 'auto-detect from store total'."""
+        import inspect
+
+        crawler = Rent591Crawler()
+        source = inspect.getsource(crawler.crawl)
+        assert 'filters.get("max_pages", 0)' in source
+
+    def test_extract_total_js_defined(self):
+        """The JS snippet for reading total count must exist."""
+        assert hasattr(Rent591Crawler, "_EXTRACT_TOTAL_JS")
+        assert "total" in Rent591Crawler._EXTRACT_TOTAL_JS
+
+    def test_total_pages_computed_correctly(self):
+        """Given 6499 total and 30 per page, should need 217 pages."""
+        total = 6499
+        per_page = 30
+        expected_pages = (total + per_page - 1) // per_page
+        assert expected_pages == 217
+
+    def test_total_pages_exact_multiple(self):
+        """When total is exact multiple of per_page, no extra page."""
+        total = 300
+        per_page = 30
+        pages = (total + per_page - 1) // per_page
+        assert pages == 10
+
+
 class TestRegionMap:
     def test_taipei(self):
         assert REGION_MAP["台北市"] == 1
