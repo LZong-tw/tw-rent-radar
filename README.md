@@ -1,6 +1,7 @@
 # tw-rent-radar 🏠
 
 [![CI](https://github.com/LZong-tw/tw-rent-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/LZong-tw/tw-rent-radar/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tw-rent-radar.svg)](https://pypi.org/project/tw-rent-radar/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
@@ -37,17 +38,21 @@ tw-rent-radar analyze --max-price 18000 --near "高雄軟體園區" --near "健�
 
 ## 快速開始
 
+### 方式一：PyPI 安裝
+
 ```bash
-# 複製專案
+pip install tw-rent-radar
+playwright install chromium
+```
+
+### 方式二：從原始碼安裝
+
+```bash
 git clone https://github.com/LZong-tw/tw-rent-radar.git
 cd tw-rent-radar
-
-# 建立虛擬環境（Python 3.12+）
 python -m venv .venv
 source .venv/bin/activate        # Linux/macOS
 source .venv/Scripts/activate    # Windows (Git Bash)
-
-# 安裝
 pip install -e ".[dev]"
 playwright install chromium
 ```
