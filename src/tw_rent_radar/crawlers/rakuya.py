@@ -11,28 +11,28 @@ from .base import BaseCrawler
 logger = logging.getLogger(__name__)
 
 CITY_CODES: dict[str, int] = {
-    "台北市": 1,
+    "台北市": 0,
+    "基隆市": 1,
     "新北市": 2,
-    "基隆市": 3,
-    "桃園市": 5,
-    "新竹市": 6,
-    "新竹縣": 7,
-    "苗栗縣": 8,
-    "台中市": 10,
-    "彰化縣": 11,
-    "南投縣": 12,
-    "雲林縣": 13,
-    "嘉義市": 14,
-    "嘉義縣": 15,
-    "台南市": 16,
-    "高雄市": 17,
-    "屏東縣": 18,
-    "宜蘭縣": 19,
-    "花蓮縣": 20,
-    "台東縣": 21,
-    "澎湖縣": 22,
-    "金門縣": 23,
-    "連江縣": 24,
+    "宜蘭縣": 3,
+    "桃園市": 4,
+    "新竹市": 5,
+    "新竹縣": 6,
+    "苗栗縣": 7,
+    "台中市": 8,
+    "彰化縣": 9,
+    "南投縣": 10,
+    "雲林縣": 11,
+    "嘉義市": 12,
+    "嘉義縣": 13,
+    "台南市": 14,
+    "高雄市": 15,
+    "台東縣": 16,
+    "屏東縣": 17,
+    "花蓮縣": 18,
+    "澎湖縣": 19,
+    "金門縣": 20,
+    "連江縣": 21,
 }
 
 
@@ -288,7 +288,9 @@ class RakuyaCrawler(BaseCrawler):
                         "type_layout": type_layout,
                         "size_floor": size_floor,
                         "city": city,
-                        "url": f"{self.base_url}{href}" if href else None,
+                        "url": href
+                        if href and href.startswith("http")
+                        else (f"{self.base_url}{href}" if href else None),
                     }
 
                     listing = self.parse_listing_card(card_data)

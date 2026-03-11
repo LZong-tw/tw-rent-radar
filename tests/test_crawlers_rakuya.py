@@ -287,13 +287,13 @@ class TestCityCode:
     """Unit tests for the CITY_CODES mapping."""
 
     def test_kaohsiung(self):
-        assert CITY_CODES["高雄市"] == 17
+        assert CITY_CODES["高雄市"] == 15
 
     def test_taipei(self):
-        assert CITY_CODES["台北市"] == 1
+        assert CITY_CODES["台北市"] == 0
 
     def test_taichung(self):
-        assert CITY_CODES["台中市"] == 10
+        assert CITY_CODES["台中市"] == 8
 
     def test_all_cities_present(self):
         assert len(CITY_CODES) == 22

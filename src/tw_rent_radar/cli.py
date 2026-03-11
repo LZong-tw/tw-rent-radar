@@ -165,7 +165,12 @@ def _export_file(dicts: list[dict], path: str, field_list: list[str] | None) -> 
 @click.option("--source", default=None, help="Filter by source platform.")
 @click.option("--cooking", default=None, help="Filter by cooking policy (可開伙/不可開伙).")
 @click.option("--gas-type", "gas_type", default=None, help="Filter by gas type.")
-@click.option("--near", default=None, help="POI or address to calculate distance from.")
+@click.option(
+    "--near", multiple=True, help="POI or address (repeatable). Default: must be near ALL."
+)
+@click.option(
+    "--near-mode", type=click.Choice(["all", "any"]), default="all", help="all=近全部, any=近任一"
+)
 @click.option("--within", type=float, default=None, help="Max distance in km (requires --near).")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option("--fields", default=None, help="Comma-separated list of fields to show.")
@@ -181,7 +186,8 @@ def search(
     source: str | None,
     cooking: str | None,
     gas_type: str | None,
-    near: str | None,
+    near: tuple[str, ...],
+    near_mode: str,
     within: float | None,
     as_json: bool,
     fields: str | None,
@@ -215,29 +221,56 @@ def search(
 
         listings = query.all()
         field_list = fields.split(",") if fields else None
-        dicts = [item.to_dict(field_list) for item in listings]
 
-    # Distance filtering with --near
+        # When --near is used, always include lat/lng for distance calculation.
+        if near and field_list:
+            geo_fields = field_list + [f for f in ("latitude", "longitude") if f not in field_list]
+            dicts = [item.to_dict(geo_fields) for item in listings]
+        else:
+            dicts = [item.to_dict(field_list) for item in listings]
+
+    # Distance filtering with --near (supports multiple points)
     if near:
         from tw_rent_radar.geo import geocode as geo_lookup
         from tw_rent_radar.geo import haversine_km
 
-        target = geo_lookup(near)
-        if target is None:
-            raise click.ClickException(
-                f"Could not geocode '{near}'. Check API keys in ~/.tw-rent-radar/config.json"
-            )
+        targets: list[tuple[float, float, str]] = []
+        for poi in near:
+            coords = geo_lookup(poi)
+            if coords is None:
+                raise click.ClickException(
+                    f"Could not geocode '{poi}'. Check API keys in ~/.tw-rent-radar/config.json"
+                )
+            targets.append((coords[0], coords[1], poi))
 
-        target_lat, target_lng = target
         filtered = []
         for d in dicts:
             lat, lng = d.get("latitude"), d.get("longitude")
             if lat is None or lng is None:
                 continue
-            dist = haversine_km(target_lat, target_lng, lat, lng)
-            d["distance_km"] = round(dist, 2)
-            if within is None or dist <= within:
-                filtered.append(d)
+
+            distances = {}
+            for t_lat, t_lng, t_name in targets:
+                dist = haversine_km(t_lat, t_lng, lat, lng)
+                distances[t_name] = round(dist, 2)
+
+            if within is not None:
+                if near_mode == "all":
+                    if not all(dist <= within for dist in distances.values()):
+                        continue
+                else:  # any
+                    if not any(dist <= within for dist in distances.values()):
+                        continue
+
+            # Add distance columns
+            if len(targets) == 1:
+                d["distance_km"] = list(distances.values())[0]
+            else:
+                for i, (name, dist) in enumerate(distances.items()):
+                    d[f"dist_{i+1}"] = dist
+                d["distance_km"] = min(distances.values())
+
+            filtered.append(d)
         dicts = sorted(filtered, key=lambda x: x["distance_km"])
 
     if output_path:
