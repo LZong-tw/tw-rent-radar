@@ -30,6 +30,7 @@ _PRICE_PATTERNS: list[re.Pattern[str]] = [
 # Known group name -> URL slug mappings.
 GROUP_SLUGS: dict[str, str] = {
     "5911高雄租屋": "lvmh3",
+    "高雄專業租屋網": "668385619901467",
 }
 
 # JavaScript to extract post text from the group feed.
