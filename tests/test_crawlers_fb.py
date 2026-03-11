@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tw_rent_radar.crawlers.fb_group import FbGroupCrawler
+from tw_rent_radar.crawlers.fb_group import GROUP_SLUGS, FbGroupCrawler
 from tw_rent_radar.crawlers.fb_market import FbMarketCrawler
 
 # ------------------------------------------------------------------
@@ -61,6 +61,97 @@ def test_parse_price_no_comma():
 def test_parse_price_dollar_sign_with_comma():
     crawler = FbGroupCrawler()
     assert crawler.parse_price_from_text("只要$12,000就能入住") == 12000
+
+
+def test_parse_price_filters_unreasonable():
+    """Prices outside 1000-100000 range should be rejected."""
+    crawler = FbGroupCrawler()
+    assert crawler.parse_price_from_text("只要500元") is None
+    assert crawler.parse_price_from_text("售價3,500,000元") is None
+
+
+# ------------------------------------------------------------------
+# Post parsing (FbGroupCrawler)
+# ------------------------------------------------------------------
+
+
+def test_parse_post_basic():
+    crawler = FbGroupCrawler()
+    post = {
+        "text": "三民區套房出租\n近火車站\n月租 12,000 元\n含水電",
+        "permalink": "https://www.facebook.com/groups/lvmh3/posts/123",
+        "imgSrcs": ["https://example.com/img.jpg"],
+        "poster": "王先生",
+    }
+    result = crawler.parse_post(post, "高雄市")
+    assert result is not None
+    assert result["source"] == "fb_group"
+    assert result["price"] == 12000
+    assert result["city"] == "高雄市"
+    assert result["title"] == "三民區套房出租"
+    assert result["contact"] == "王先生"
+    assert result["url"] == post["permalink"]
+    assert json.loads(result["images"]) == ["https://example.com/img.jpg"]
+    assert result["description"].startswith("三民區套房出租")
+    assert result["source_id"]  # non-empty hash
+
+
+def test_parse_post_no_price_returns_none():
+    crawler = FbGroupCrawler()
+    post = {"text": "找室友一起合租，有興趣私訊", "permalink": None, "imgSrcs": [], "poster": None}
+    assert crawler.parse_post(post, "高雄市") is None
+
+
+def test_parse_post_empty_text_returns_none():
+    crawler = FbGroupCrawler()
+    assert crawler.parse_post({"text": ""}, "高雄市") is None
+    assert crawler.parse_post({"text": None}, "高雄市") is None
+
+
+def test_parse_post_fallback_url():
+    """When no permalink, group_url is used as fallback."""
+    crawler = FbGroupCrawler()
+    post = {"text": "套房出租 8,000元/月", "permalink": None, "imgSrcs": [], "poster": None}
+    result = crawler.parse_post(post, "高雄市", group_url="https://www.facebook.com/groups/lvmh3")
+    assert result["url"] == "https://www.facebook.com/groups/lvmh3"
+
+
+def test_generate_source_id_stable():
+    """Same text should produce the same source ID."""
+    text = "三民區套房出租月租12000"
+    id1 = FbGroupCrawler._generate_source_id(text)
+    id2 = FbGroupCrawler._generate_source_id(text)
+    assert id1 == id2
+    assert len(id1) == 12
+
+
+def test_generate_source_id_different():
+    """Different text should produce different source IDs."""
+    id1 = FbGroupCrawler._generate_source_id("套房A月租12000")
+    id2 = FbGroupCrawler._generate_source_id("套房B月租15000")
+    assert id1 != id2
+
+
+# ------------------------------------------------------------------
+# Group URL resolution
+# ------------------------------------------------------------------
+
+
+def test_resolve_group_url_full_url():
+    url = "https://www.facebook.com/groups/lvmh3/"
+    assert FbGroupCrawler._resolve_group_url(url) == "https://www.facebook.com/groups/lvmh3"
+
+
+def test_resolve_group_url_slug():
+    assert FbGroupCrawler._resolve_group_url("lvmh3") == "https://www.facebook.com/groups/lvmh3"
+
+
+def test_resolve_group_url_known_name():
+    assert "lvmh3" in FbGroupCrawler._resolve_group_url("5911高雄租屋")
+
+
+def test_group_slugs_has_known_groups():
+    assert "5911高雄租屋" in GROUP_SLUGS
 
 
 # ------------------------------------------------------------------
