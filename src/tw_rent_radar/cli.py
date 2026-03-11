@@ -354,6 +354,99 @@ def stats(as_json: bool, db_path: str):
             click.echo("  No listings in database.")
 
 
+@cli.command()
+@click.option("--city", default="高雄市", help="篩選縣市")
+@click.option("--max-price", type=int, default=None, help="最高租金")
+@click.option("--cooking", default=None, help="開伙篩選（可開伙/不可開伙）")
+@click.option(
+    "--near",
+    multiple=True,
+    help="POI 地點（可重複），用於計算距離並篩選",
+)
+@click.option("--within", type=float, default=None, help="POI 最大距離（公里）")
+@click.option(
+    "--output",
+    "output_path",
+    default="rentals_analysis.xlsx",
+    help="輸出檔案路徑（.xlsx）",
+)
+@click.option("--db", "db_path", default=DEFAULT_DB, hidden=True)
+def analyze(
+    city: str,
+    max_price: int | None,
+    cooking: str | None,
+    near: tuple[str, ...],
+    within: float | None,
+    output_path: str,
+    db_path: str,
+):
+    """分析物件並產生豐富的 XLSX 報表（捷運、品質、dedup）"""
+    from tw_rent_radar.analysis import (
+        cross_platform_dedup,
+        enrich_listing_for_analysis,
+        write_xlsx,
+    )
+
+    engine = get_engine(db_path)
+    create_tables(engine)
+
+    with Session(engine) as session:
+        query = session.query(Listing)
+        if city:
+            query = query.filter(Listing.city == city)
+        if max_price is not None:
+            query = query.filter(Listing.price <= max_price)
+        if cooking:
+            query = query.filter((Listing.cooking == cooking) | (Listing.cooking.is_(None)))
+        listings = query.all()
+        dicts = [item.to_dict() for item in listings]
+
+    # Geocode POIs
+    poi_coords: list[tuple[float, float, str]] = []
+    if near:
+        for poi in near:
+            coords = geocode(poi)
+            if coords is None:
+                raise click.ClickException(
+                    f"Could not geocode '{poi}'. Check API keys in ~/.tw-rent-radar/config.json"
+                )
+            poi_coords.append((coords[0], coords[1], poi))
+
+    # Enrich each listing
+    results: list[dict] = []
+    for d in dicts:
+        enriched = enrich_listing_for_analysis(d, poi_coords or None, within)
+        if enriched is not None:
+            results.append(enriched)
+
+    # Cross-platform dedup detection
+    cross_platform_dedup(results)
+
+    # Sort by first POI distance, or by price
+    if poi_coords:
+        first_poi = poi_coords[0][2]
+        results.sort(key=lambda x: x.get(f"dist_{first_poi}") or 999)
+    else:
+        results.sort(key=lambda x: x.get("price") or 999)
+
+    if not results:
+        click.echo("No listings found matching criteria.")
+        return
+
+    write_xlsx(results, output_path)
+
+    # Print summary
+    by_src: dict[str, int] = {}
+    for r in results:
+        by_src[r["source"]] = by_src.get(r["source"], 0) + 1
+    cooking_known = sum(1 for r in results if r.get("cooking"))
+
+    console.print(f"[green]Saved {len(results)} listings to {output_path}[/green]")
+    for src, count in by_src.items():
+        console.print(f"  {src}: {count}")
+    console.print(f"  Cooking known: {cooking_known}/{len(results)}")
+
+
 @cli.group("db")
 def db_group():
     """Database management commands."""
