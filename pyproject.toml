@@ -20,6 +20,12 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
 ]
 requires-python = ">=3.12"
+
+[project.urls]
+Homepage = "https://github.com/LZong-tw/tw-rent-radar"
+Repository = "https://github.com/LZong-tw/tw-rent-radar"
+Issues = "https://github.com/LZong-tw/tw-rent-radar/issues"
+
 dependencies = [
     "click>=8.1",
     "sqlalchemy>=2.0",
@@ -30,6 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+xlsx = ["openpyxl>=3.1"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
