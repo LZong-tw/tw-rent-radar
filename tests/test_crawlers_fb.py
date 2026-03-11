@@ -167,6 +167,44 @@ def test_parse_post_permalink_not_group_url():
     assert "/posts/" in result["url"]
 
 
+def test_extract_post_ids_from_graphql():
+    """Should extract post_id and text snippet from GraphQL response text."""
+    crawler = FbGroupCrawler()
+    response = '{"data":{"post_id":"1234567890","message":{"text":"三民區套房出租 月租8000"}}}'
+    out: dict[str, str] = {}
+    crawler._extract_post_ids_from_graphql(response, out)
+    assert "1234567890" in out
+    assert "三民區套房出租" in out["1234567890"]
+
+
+def test_match_permalinks_basic():
+    """Should match DOM post text with GraphQL post by text overlap."""
+    crawler = FbGroupCrawler()
+    posts = [{"text": "三民區套房出租 近高雄車站 月租8000", "permalink": None}]
+    graphql_posts = {"9876543210": "三民區套房出租 近高雄車站 月租8000"}
+    crawler._match_permalinks(posts, graphql_posts, "lvmh3")
+    assert posts[0]["permalink"] == "https://www.facebook.com/groups/lvmh3/posts/9876543210/"
+
+
+def test_match_permalinks_no_match():
+    """Should not set permalink when no GraphQL post matches."""
+    crawler = FbGroupCrawler()
+    posts = [{"text": "完全不同的內容", "permalink": None}]
+    graphql_posts = {"111": "三民區套房出租 近高雄車站 月租8000"}
+    crawler._match_permalinks(posts, graphql_posts, "lvmh3")
+    assert posts[0]["permalink"] is None
+
+
+def test_match_permalinks_preserves_existing():
+    """Should not overwrite an existing permalink."""
+    crawler = FbGroupCrawler()
+    existing = "https://www.facebook.com/groups/lvmh3/posts/existing/"
+    posts = [{"text": "三民區套房出租 月租8000", "permalink": existing}]
+    graphql_posts = {"999": "三民區套房出租 月租8000"}
+    crawler._match_permalinks(posts, graphql_posts, "lvmh3")
+    assert posts[0]["permalink"] == existing
+
+
 def test_generate_source_id_stable():
     """Same text should produce the same source ID."""
     text = "三民區套房出租月租12000"

@@ -79,6 +79,11 @@ _JS_EXTRACT_POSTS = r"""() => {
         // Permalink — try multiple strategies
         let permalink = null;
         const allLinks = article.querySelectorAll('a[href]');
+        const nonMeta = [
+            '/user/', '/members', '/about', '/media',
+            '/files', '/events', '/admin', '/search',
+            '/photos/', '/videos/'
+        ];
 
         // Strategy 1: Explicit /posts/ or /permalink/ links
         for (const a of allLinks) {
@@ -89,22 +94,36 @@ _JS_EXTRACT_POSTS = r"""() => {
             }
         }
 
-        // Strategy 2: Any group sub-link (e.g. /groups/lvmh3/12345678/)
-        // but exclude admin pages like /members, /about, /media, /files, /events
+        // Strategy 2: Timestamp link — FB puts the post time in an <a> with
+        // a nested element that has an aria-label or uses <abbr>/<time>.
+        // The timestamp link's href typically points to the post permalink.
         if (!permalink) {
-            const skip = ['/members', '/about', '/media', '/files', '/events', '/admin', '/search'];
             for (const a of allLinks) {
                 const h = a.href || '';
-                // Must have /groups/<slug>/<something_else>
-                const m = h.match(/\/groups\/[^/?#]+\/([^/?#]+)/);
-                if (m && !skip.some(s => h.includes(s))) {
+                if (!h.includes('/groups/')) continue;
+                if (nonMeta.some(s => h.includes(s))) continue;
+                // Timestamp links contain <abbr>, <time>, or a span with aria-label
+                const hasTime = a.querySelector('abbr, time, span[aria-label], use');
+                if (hasTime) {
                     permalink = h.split('?')[0];
                     break;
                 }
             }
         }
 
-        // Strategy 3: story.php or story_fbid links
+        // Strategy 3: Any group sub-link that looks like a post ID (numeric path)
+        if (!permalink) {
+            for (const a of allLinks) {
+                const h = a.href || '';
+                const m = h.match(/\/groups\/[^/?#]+\/(\d+)/);
+                if (m && !nonMeta.some(s => h.includes(s))) {
+                    permalink = h.split('?')[0];
+                    break;
+                }
+            }
+        }
+
+        // Strategy 4: story.php or story_fbid links
         if (!permalink) {
             for (const a of allLinks) {
                 const h = a.href || '';
@@ -285,6 +304,21 @@ class FbGroupCrawler(BaseCrawler):
             context = await ensure_fb_session(pw)
             page = await context.new_page()
 
+            # Intercept GraphQL responses to collect post IDs + text snippets.
+            graphql_posts: dict[str, str] = {}  # post_id -> text snippet
+
+            async def _on_response(response):
+                url = response.url
+                if "graphql" not in url.lower():
+                    return
+                try:
+                    text = await response.text()
+                    self._extract_post_ids_from_graphql(text, graphql_posts)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            page.on("response", _on_response)
+
             await page.goto(group_url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
 
@@ -300,9 +334,15 @@ class FbGroupCrawler(BaseCrawler):
             await self._click_expand_buttons(page)
             await asyncio.sleep(1)
 
+            logger.info("Collected %d post IDs from GraphQL", len(graphql_posts))
+
             # Extract posts from the feed.
             posts = await page.evaluate(_JS_EXTRACT_POSTS)
             logger.info("Extracted %d posts from feed", len(posts))
+
+            # Match DOM posts with GraphQL post IDs by text similarity.
+            group_slug = group_url.rstrip("/").split("/groups/")[-1]
+            self._match_permalinks(posts, graphql_posts, group_slug)
 
             listings = []
             seen_ids: set[str] = set()
@@ -316,6 +356,63 @@ class FbGroupCrawler(BaseCrawler):
             await context.browser.close()
 
         return listings
+
+    @staticmethod
+    def _extract_post_ids_from_graphql(response_text: str, out: dict[str, str]) -> None:
+        """Extract post_id → text snippet mappings from a GraphQL response."""
+        for m in re.finditer(r'"post_id":"(\d+)"', response_text):
+            pid = m.group(1)
+            if pid in out:
+                continue
+            # Look for "text":"..." near this post_id (within ~3000 chars)
+            start = max(0, m.start() - 3000)
+            end = min(len(response_text), m.end() + 3000)
+            chunk = response_text[start:end]
+            texts = re.findall(r'"text":"([^"]{10,})"', chunk)
+            if texts:
+                # Use the longest text snippet as the representative text.
+                out[pid] = max(texts, key=len)
+
+    @staticmethod
+    def _match_permalinks(
+        posts: list[dict],
+        graphql_posts: dict[str, str],
+        group_slug: str,
+    ) -> None:
+        """Match DOM-extracted posts with GraphQL post IDs by text overlap.
+
+        Mutates ``posts`` in-place, setting the ``permalink`` field when a match
+        is found.
+        """
+        used_ids: set[str] = set()
+        for post in posts:
+            if post.get("permalink"):
+                continue
+            dom_text = post.get("text", "")
+            if not dom_text:
+                continue
+
+            best_id = None
+            best_overlap = 0
+            for pid, api_text in graphql_posts.items():
+                if pid in used_ids:
+                    continue
+                # Use substring overlap: how much of the API text appears in DOM text.
+                # JSON-decode the API text to handle Unicode escapes.
+                try:
+                    decoded = json.loads(f'"{api_text}"')
+                except (json.JSONDecodeError, ValueError):
+                    decoded = api_text
+                # Count matching characters in order (simple substring check).
+                overlap = sum(1 for c in decoded if c in dom_text)
+                ratio = overlap / max(len(decoded), 1)
+                if ratio > best_overlap and ratio > 0.4:
+                    best_overlap = ratio
+                    best_id = pid
+
+            if best_id:
+                post["permalink"] = f"https://www.facebook.com/groups/{group_slug}/posts/{best_id}/"
+                used_ids.add(best_id)
 
     @staticmethod
     async def _click_expand_buttons(page) -> None:
