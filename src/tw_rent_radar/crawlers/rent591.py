@@ -257,7 +257,8 @@ class Rent591Crawler(BaseCrawler):
     _EXTRACT_TOTAL_JS = """() => {
         const n = window.__NUXT__;
         if (!n || !n.pinia || !n.pinia['rent-list']) return 0;
-        return n.pinia['rent-list'].total || 0;
+        const t = n.pinia['rent-list'].total;
+        return typeof t === 'number' ? t : Number(t) || 0;
     }"""
 
     async def crawl(self, **filters) -> list[dict]:
