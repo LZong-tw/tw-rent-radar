@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from tw_rent_radar.crawlers.rent591 import REGION_MAP, Rent591Crawler
@@ -360,6 +362,19 @@ class TestAntiBotDetection:
         assert "asyncio.sleep" in source
 
 
+# ------------------------------------------------------------------
+# Mock infrastructure for Playwright-dependent tests
+# ------------------------------------------------------------------
+
+
+def _make_items(start_id: int, count: int) -> list[dict]:
+    """Generate mock 591 listing items with sequential IDs."""
+    return [
+        {"id": start_id + i, "title": f"Listing {start_id + i}", "price": "10000"}
+        for i in range(count)
+    ]
+
+
 class _MockPage:
     """Minimal mock for Playwright page to test _fetch_page_items."""
 
@@ -383,8 +398,113 @@ class _MockPage:
         pass
 
 
+class _CrawlMockPage:
+    """Mock page for full crawl() tests with per-page data and anti-bot simulation."""
+
+    def __init__(
+        self,
+        pages_data: dict[int, list[dict]],
+        total: int,
+        *,
+        anti_bot_pages: set[int] | None = None,
+        reverse_extra: dict[int, list[dict]] | None = None,
+    ):
+        self._pages_data = pages_data
+        self._total = total
+        self._anti_bot_pages = anti_bot_pages or set()
+        self._reverse_extra = reverse_extra or {}
+        self._current_page = 1
+        self.visit_count: dict[int, int] = {}
+
+    async def goto(self, url, **kwargs):
+        if "page=" in url:
+            self._current_page = int(url.split("page=")[1].split("&")[0])
+        else:
+            self._current_page = 1
+        self.visit_count[self._current_page] = self.visit_count.get(self._current_page, 0) + 1
+
+    async def evaluate(self, js):
+        # _DIAGNOSE_PAGE_JS
+        if "challenge-form" in js:
+            if self._current_page in self._anti_bot_pages:
+                return "no_nuxt"
+            return "ok"
+        # _EXTRACT_LISTINGS_JS
+        if "dataList" in js:
+            items = list(self._pages_data.get(self._current_page, []))
+            visits = self.visit_count.get(self._current_page, 0)
+            if visits > 1:
+                items.extend(self._reverse_extra.get(self._current_page, []))
+            return items
+        # _EXTRACT_TOTAL_JS
+        if ".total" in js:
+            return self._total
+        # _EXTRACT_DETAIL_JS
+        if "rent-detail-info" in js:
+            return None
+        return None
+
+    async def wait_for_load_state(self, state, **kwargs):
+        pass
+
+
+class _MockBrowserContext:
+    def __init__(self, page):
+        self._page = page
+
+    async def add_cookies(self, cookies):
+        pass
+
+    async def new_page(self):
+        return self._page
+
+
+class _MockBrowser:
+    def __init__(self, page):
+        self._page = page
+
+    async def new_context(self):
+        return _MockBrowserContext(self._page)
+
+    async def close(self):
+        pass
+
+
+class _MockChromium:
+    def __init__(self, page):
+        self._page = page
+
+    async def launch(self, **kwargs):
+        return _MockBrowser(self._page)
+
+
+class _MockPlaywrightCM:
+    """Mock async context manager replacing async_playwright()."""
+
+    def __init__(self, page):
+        self.chromium = _MockChromium(page)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+# ------------------------------------------------------------------
+# _fetch_page_items behavioral tests
+# ------------------------------------------------------------------
+
+
 class TestFetchPageItemsBehavior:
     """Behavioral tests for _fetch_page_items with mock page."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_sleep(self, monkeypatch):
+        async def noop(seconds):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", noop)
 
     @pytest.fixture
     def crawler(self):
@@ -408,8 +528,6 @@ class TestFetchPageItemsBehavior:
     async def test_retries_on_anti_bot_then_succeeds(self, crawler):
         """First attempt blocked, second attempt succeeds."""
         items = [{"id": 2, "title": "found"}]
-        # Attempt 1: diagnose → no_store
-        # Attempt 2: diagnose → ok, extract → items
         mock = _MockPage(evaluate_results=["no_store", "ok", items])
         result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
         assert result == items
@@ -434,7 +552,6 @@ class TestFetchPageItemsBehavior:
     async def test_cloudflare_waits_and_rechecks(self, crawler):
         """Cloudflare detected → should wait and re-evaluate state."""
         items = [{"id": 4}]
-        # Attempt 1: diagnose → cloudflare, re-diagnose after wait → ok, extract → items
         mock = _MockPage(evaluate_results=["cloudflare", "ok", items])
         result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=0)
         assert result == items
@@ -443,8 +560,6 @@ class TestFetchPageItemsBehavior:
     async def test_cloudflare_not_resolved_retries(self, crawler):
         """Cloudflare detected and not resolved → should retry on next attempt."""
         items = [{"id": 5}]
-        # Attempt 1: cloudflare → re-check → still cloudflare → retry
-        # Attempt 2: ok → items
         mock = _MockPage(evaluate_results=["cloudflare", "cloudflare", "ok", items])
         result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
         assert result == items
@@ -453,8 +568,6 @@ class TestFetchPageItemsBehavior:
     async def test_null_items_despite_ok_state_retries(self, crawler):
         """State is OK but items extraction returns None → should retry."""
         items = [{"id": 6}]
-        # Attempt 1: ok → null items
-        # Attempt 2: ok → real items
         mock = _MockPage(evaluate_results=["ok", None, "ok", items])
         result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
         assert result == items
@@ -465,6 +578,135 @@ class TestFetchPageItemsBehavior:
         mock = _MockPage(evaluate_results=["ok", []])
         result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=0)
         assert result == []
+
+
+# ------------------------------------------------------------------
+# Full crawl() behavioral tests with mocked Playwright
+# ------------------------------------------------------------------
+
+
+class TestCrawlBehavior:
+    """End-to-end behavioral tests for the crawl() method."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_sleep(self, monkeypatch):
+        async def noop(seconds):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", noop)
+
+    def _setup(self, monkeypatch, page):
+        monkeypatch.setattr(
+            "tw_rent_radar.crawlers.rent591.async_playwright",
+            lambda: _MockPlaywrightCM(page),
+        )
+
+    @pytest.mark.asyncio
+    async def test_collects_all_pages(self, monkeypatch):
+        """Normal crawl: 3 pages × 30 items, no reverse pass needed."""
+        pages = {1: _make_items(1, 30), 2: _make_items(31, 30), 3: _make_items(61, 30)}
+        mock = _CrawlMockPage(pages, total=90)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        assert len(results) == 90
+        # No reverse pass — each page visited exactly once
+        assert mock.visit_count == {1: 1, 2: 1, 3: 1}
+
+    @pytest.mark.asyncio
+    async def test_dedup_by_source_id(self, monkeypatch):
+        """Duplicate source_ids across pages are deduplicated."""
+        pages = {1: _make_items(1, 30), 2: _make_items(25, 30)}  # ids 25-30 overlap
+        mock = _CrawlMockPage(pages, total=60)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        ids = [r["source_id"] for r in results]
+        assert len(ids) == len(set(ids))  # all unique
+        assert len(results) == 54  # 30 + 30 - 6 duplicates
+
+    @pytest.mark.asyncio
+    async def test_anti_bot_pages_skipped(self, monkeypatch):
+        """Pages with anti-bot are skipped, other pages still collected."""
+        pages = {1: _make_items(1, 30), 2: _make_items(31, 30), 3: _make_items(61, 30)}
+        mock = _CrawlMockPage(pages, total=90, anti_bot_pages={2})
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        ids = {r["source_id"] for r in results}
+        # Page 2 blocked → forward gets 60; reverse also blocked on page 2
+        assert len(results) == 60
+        # Items from page 2 (ids 31-60) should be absent
+        assert not ids.intersection(str(i) for i in range(31, 61))
+
+    @pytest.mark.asyncio
+    async def test_empty_items_mid_pagination_continues(self, monkeypatch):
+        """Empty items mid-pagination detected as suspicious, continues to next page."""
+        pages = {1: _make_items(1, 30), 2: [], 3: _make_items(61, 30)}
+        mock = _CrawlMockPage(pages, total=90)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        assert len(results) == 60
+        # Page 3 was reached despite page 2 being empty
+        assert any(r["source_id"] == "61" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_reverse_pass_finds_new_items(self, monkeypatch):
+        """Reverse pass collects items missed by forward pass (pagination drift)."""
+        pages = {1: _make_items(1, 30), 2: _make_items(31, 25), 3: _make_items(61, 30)}
+        # 5 items "drifted" — they appear on page 2 only during reverse pass
+        reverse_extra = {2: _make_items(56, 5)}
+        mock = _CrawlMockPage(pages, total=90, reverse_extra=reverse_extra)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        # Forward: 30 + 25 + 30 = 85.  Gap = 5.6% → reverse triggered.
+        # Reverse page 2: 25 dupes + 5 new → total 90.  Gap 0% → stop.
+        assert len(results) == 90
+
+    @pytest.mark.asyncio
+    async def test_reverse_pass_stops_early_at_one_percent(self, monkeypatch):
+        """Reverse pass stops as soon as gap drops to ≤ 1%."""
+        pages = {
+            1: _make_items(1, 30),
+            2: _make_items(31, 25),
+            3: _make_items(61, 25),
+            4: _make_items(91, 10),
+        }
+        # Forward gets 90 out of 100 (10% gap). Reverse pass:
+        # Page 4: 10 dupes. Page 3: 25 dupes + 5 new → 95/100 = 5% → continue.
+        # Page 2: 25 dupes + 5 new → 100/100 = 0% → stop. Page 1 not visited.
+        reverse_extra = {3: _make_items(86, 5), 2: _make_items(56, 5)}
+        mock = _CrawlMockPage(pages, total=100, reverse_extra=reverse_extra)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        assert len(results) == 100
+        # Page 1 should only be visited once (forward), not in reverse
+        assert mock.visit_count[1] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_reverse_pass_when_complete(self, monkeypatch):
+        """When forward pass gets everything, no reverse pass runs."""
+        pages = {1: _make_items(1, 30), 2: _make_items(31, 30)}
+        mock = _CrawlMockPage(pages, total=60)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市")
+        assert len(results) == 60
+        assert sum(mock.visit_count.values()) == 2  # only forward pass
+
+    @pytest.mark.asyncio
+    async def test_max_pages_limits_crawl(self, monkeypatch):
+        """max_pages parameter should cap the number of pages crawled."""
+        pages = {1: _make_items(1, 30), 2: _make_items(31, 30), 3: _make_items(61, 30)}
+        mock = _CrawlMockPage(pages, total=90)
+        self._setup(monkeypatch, mock)
+
+        results = await Rent591Crawler().crawl(city="高雄市", max_pages=2)
+        assert len(results) == 60
+        assert 3 not in mock.visit_count
 
 
 class TestRegionMap:
