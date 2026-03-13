@@ -264,7 +264,9 @@ class FbGroupCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     async def crawl(self, **filters) -> list[dict]:
-        """Crawl a Facebook group for rental listings.
+        """Crawl Facebook groups for rental listings.
+
+        When no group is specified, crawls **all** groups in ``GROUP_SLUGS``.
 
         Parameters
         ----------
@@ -273,6 +275,7 @@ class FbGroupCrawler(BaseCrawler):
 
             * ``group`` -- Facebook group URL, slug, or known name
               (e.g. ``"5911高雄租屋"``, ``"lvmh3"``, or a full URL).
+              When omitted, all known groups are crawled.
             * ``city`` -- Chinese city name (default ``"高雄市"``).
             * ``scroll_count`` -- Number of scroll actions to load more posts
               (default ``15``).
@@ -282,79 +285,106 @@ class FbGroupCrawler(BaseCrawler):
         list[dict]
             Parsed listing dicts ready for ``upsert_listing``.
         """
-        group: str | None = filters.get("group")
-        if not group:
-            logger.warning(
-                "No group specified. Use group=<url_or_slug_or_name>. "
-                "Example: group='5911高雄租屋' or group='lvmh3'"
-            )
-            return []
-
         from playwright.async_api import async_playwright
 
         from tw_rent_radar.crawlers.fb_auth import ensure_fb_session
 
+        group: str | None = filters.get("group")
         city: str = filters.get("city", "高雄市")
         scroll_count: int = int(filters.get("scroll_count", 15))
 
-        group_url = self._resolve_group_url(group)
-        logger.info("Crawling Facebook group: %s", group_url)
+        # Build list of group URLs to crawl.
+        if group:
+            group_urls = [self._resolve_group_url(group)]
+        else:
+            group_urls = [
+                f"https://www.facebook.com/groups/{slug}" for slug in GROUP_SLUGS.values()
+            ]
+            logger.info("No group specified, crawling all %d known groups", len(group_urls))
+
+        all_listings: list[dict] = []
+        seen_ids: set[str] = set()
 
         async with async_playwright() as pw:
             context = await ensure_fb_session(pw)
-            page = await context.new_page()
 
-            # Intercept GraphQL responses to collect post IDs + text snippets.
-            graphql_posts: dict[str, str] = {}  # post_id -> text snippet
-
-            async def _on_response(response):
-                url = response.url
-                if "graphql" not in url.lower():
-                    return
+            for group_url in group_urls:
+                logger.info("Crawling Facebook group: %s", group_url)
                 try:
-                    text = await response.text()
-                    self._extract_post_ids_from_graphql(text, graphql_posts)
+                    listings = await self._crawl_single_group(
+                        context, group_url, city, scroll_count
+                    )
+                    for listing in listings:
+                        if listing["source_id"] not in seen_ids:
+                            seen_ids.add(listing["source_id"])
+                            all_listings.append(listing)
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.warning("Failed to crawl group: %s", group_url)
+                    continue
 
-            page.on("response", _on_response)
-
-            await page.goto(group_url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(5)
-
-            # Scroll to load more posts, clicking expand buttons periodically.
-            for i in range(scroll_count):
-                await page.evaluate("window.scrollBy(0, 2000)")
-                await asyncio.sleep(1.5)
-
-                if (i + 1) % 3 == 0:
-                    await self._click_expand_buttons(page)
-
-            # Final round of clicking expand buttons.
-            await self._click_expand_buttons(page)
-            await asyncio.sleep(1)
-
-            logger.info("Collected %d post IDs from GraphQL", len(graphql_posts))
-
-            # Extract posts from the feed.
-            posts = await page.evaluate(_JS_EXTRACT_POSTS)
-            logger.info("Extracted %d posts from feed", len(posts))
-
-            # Match DOM posts with GraphQL post IDs by text similarity.
-            group_slug = group_url.rstrip("/").split("/groups/")[-1]
-            self._match_permalinks(posts, graphql_posts, group_slug)
-
-            listings = []
-            seen_ids: set[str] = set()
-            for post_data in posts:
-                listing = self.parse_post(post_data, city, group_url)
-                if listing and listing["source_id"] not in seen_ids:
-                    seen_ids.add(listing["source_id"])
-                    listings.append(listing)
-
-            logger.info("Parsed %d rental listings from group posts", len(listings))
             await context.browser.close()
 
+        logger.info("Total listings from all groups: %d", len(all_listings))
+        return all_listings
+
+    async def _crawl_single_group(
+        self,
+        context,
+        group_url: str,
+        city: str,
+        scroll_count: int,
+    ) -> list[dict]:
+        """Crawl a single Facebook group and return parsed listings."""
+        page = await context.new_page()
+
+        # Intercept GraphQL responses to collect post IDs + text snippets.
+        graphql_posts: dict[str, str] = {}  # post_id -> text snippet
+
+        async def _on_response(response):
+            url = response.url
+            if "graphql" not in url.lower():
+                return
+            try:
+                text = await response.text()
+                self._extract_post_ids_from_graphql(text, graphql_posts)
+            except Exception:  # noqa: BLE001
+                pass
+
+        page.on("response", _on_response)
+
+        await page.goto(group_url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(5)
+
+        # Scroll to load more posts, clicking expand buttons periodically.
+        for i in range(scroll_count):
+            await page.evaluate("window.scrollBy(0, 2000)")
+            await asyncio.sleep(1.5)
+
+            if (i + 1) % 3 == 0:
+                await self._click_expand_buttons(page)
+
+        # Final round of clicking expand buttons.
+        await self._click_expand_buttons(page)
+        await asyncio.sleep(1)
+
+        logger.info("Collected %d post IDs from GraphQL", len(graphql_posts))
+
+        # Extract posts from the feed.
+        posts = await page.evaluate(_JS_EXTRACT_POSTS)
+        logger.info("Extracted %d posts from feed", len(posts))
+
+        # Match DOM posts with GraphQL post IDs by text similarity.
+        group_slug = group_url.rstrip("/").split("/groups/")[-1]
+        self._match_permalinks(posts, graphql_posts, group_slug)
+
+        listings = []
+        for post_data in posts:
+            listing = self.parse_post(post_data, city, group_url)
+            if listing:
+                listings.append(listing)
+
+        logger.info("Parsed %d rental listings from %s", len(listings), group_url)
+        await page.close()
         return listings
 
     @staticmethod

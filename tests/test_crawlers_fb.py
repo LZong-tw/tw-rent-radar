@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from tw_rent_radar.crawlers.fb_group import GROUP_SLUGS, FbGroupCrawler
 from tw_rent_radar.crawlers.fb_market import FbMarketCrawler
 
@@ -329,12 +327,31 @@ def test_market_parse_card_minimal_lines():
 
 
 # ------------------------------------------------------------------
-# crawl() — group requires group param
+# crawl() — no group means crawl all known groups
 # ------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_fb_group_crawl_no_group_returns_empty():
+def test_fb_group_crawl_no_group_crawls_all(monkeypatch):
+    """When no group is specified, crawl() should attempt all GROUP_SLUGS."""
+    crawled_urls: list[str] = []
+
+    async def fake_crawl_single(self, context, group_url, city, scroll_count):
+        crawled_urls.append(group_url)
+        return []
+
+    monkeypatch.setattr(FbGroupCrawler, "_crawl_single_group", fake_crawl_single)
+
+    async def fake_ensure(pw):
+        ctx = await pw.chromium.launch(headless=True)
+        return await ctx.new_context()
+
+    monkeypatch.setattr("tw_rent_radar.crawlers.fb_auth.ensure_fb_session", fake_ensure)
+
+    import asyncio
+
     crawler = FbGroupCrawler()
-    result = await crawler.crawl()
+    result = asyncio.run(crawler.crawl())
     assert result == []
+    assert len(crawled_urls) == len(GROUP_SLUGS)
+    for slug in GROUP_SLUGS.values():
+        assert f"https://www.facebook.com/groups/{slug}" in crawled_urls

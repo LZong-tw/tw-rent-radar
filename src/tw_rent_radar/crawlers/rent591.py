@@ -299,6 +299,8 @@ class Rent591Crawler(BaseCrawler):
             total_pages = max_pages or 999  # will be refined after first page
 
             page_num = 0
+            consecutive_failures = 0
+            max_consecutive_failures = 3
             while page_num < total_pages:
                 page_num += 1
                 list_url = f"{self.list_base_url}?region={region_id}"
@@ -310,8 +312,19 @@ class Rent591Crawler(BaseCrawler):
                 try:
                     await page.goto(list_url, wait_until="networkidle", timeout=30000)
                 except Exception:  # noqa: BLE001
-                    logger.warning("Page load failed for page %d", page_num)
-                    break
+                    consecutive_failures += 1
+                    logger.warning(
+                        "Page load failed for page %d (%d/%d consecutive failures)",
+                        page_num,
+                        consecutive_failures,
+                        max_consecutive_failures,
+                    )
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error("Too many consecutive failures, stopping crawl")
+                        break
+                    continue
+
+                consecutive_failures = 0
 
                 # On first page, read total count to compute actual page limit.
                 if page_num == 1 and max_pages == 0:
