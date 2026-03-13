@@ -331,6 +331,17 @@ def test_market_parse_card_minimal_lines():
 # ------------------------------------------------------------------
 
 
+def _patch_fb_crawl(monkeypatch, fake_crawl_single):
+    """Helper to patch FbGroupCrawler for unit tests."""
+    monkeypatch.setattr(FbGroupCrawler, "_crawl_single_group", fake_crawl_single)
+
+    async def fake_ensure(pw):
+        ctx = await pw.chromium.launch(headless=True)
+        return await ctx.new_context()
+
+    monkeypatch.setattr("tw_rent_radar.crawlers.fb_auth.ensure_fb_session", fake_ensure)
+
+
 def test_fb_group_crawl_no_group_crawls_all(monkeypatch):
     """When no group is specified, crawl() should attempt all GROUP_SLUGS."""
     crawled_urls: list[str] = []
@@ -339,13 +350,7 @@ def test_fb_group_crawl_no_group_crawls_all(monkeypatch):
         crawled_urls.append(group_url)
         return []
 
-    monkeypatch.setattr(FbGroupCrawler, "_crawl_single_group", fake_crawl_single)
-
-    async def fake_ensure(pw):
-        ctx = await pw.chromium.launch(headless=True)
-        return await ctx.new_context()
-
-    monkeypatch.setattr("tw_rent_radar.crawlers.fb_auth.ensure_fb_session", fake_ensure)
+    _patch_fb_crawl(monkeypatch, fake_crawl_single)
 
     import asyncio
 
@@ -355,3 +360,61 @@ def test_fb_group_crawl_no_group_crawls_all(monkeypatch):
     assert len(crawled_urls) == len(GROUP_SLUGS)
     for slug in GROUP_SLUGS.values():
         assert f"https://www.facebook.com/groups/{slug}" in crawled_urls
+
+
+def test_fb_group_crawl_dedup_across_groups(monkeypatch):
+    """Listings with the same source_id from different groups should be deduplicated."""
+
+    async def fake_crawl_single(self, context, group_url, city, scroll_count):
+        # Both groups return a listing with the same text (same source_id)
+        return [
+            {
+                "source": "fb_group",
+                "source_id": "aabbccdd1122",
+                "title": "重複物件",
+                "price": 10000,
+                "city": city,
+                "url": group_url,
+            }
+        ]
+
+    _patch_fb_crawl(monkeypatch, fake_crawl_single)
+
+    import asyncio
+
+    crawler = FbGroupCrawler()
+    result = asyncio.run(crawler.crawl())
+    # Two groups each return the same listing → should be deduplicated to 1
+    assert len(result) == 1
+    assert result[0]["source_id"] == "aabbccdd1122"
+
+
+def test_fb_group_crawl_error_in_one_group_continues(monkeypatch):
+    """If one group raises an exception, the other groups should still be crawled."""
+    call_count = 0
+
+    async def fake_crawl_single(self, context, group_url, city, scroll_count):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Simulated group crawl failure")
+        return [
+            {
+                "source": "fb_group",
+                "source_id": f"id_{call_count}",
+                "title": "正常物件",
+                "price": 8000,
+                "city": city,
+                "url": group_url,
+            }
+        ]
+
+    _patch_fb_crawl(monkeypatch, fake_crawl_single)
+
+    import asyncio
+
+    crawler = FbGroupCrawler()
+    result = asyncio.run(crawler.crawl())
+    # First group fails, second group succeeds → should get 1 listing
+    assert len(result) == 1
+    assert call_count == len(GROUP_SLUGS)

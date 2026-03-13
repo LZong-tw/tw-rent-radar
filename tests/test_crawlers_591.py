@@ -360,6 +360,113 @@ class TestAntiBotDetection:
         assert "asyncio.sleep" in source
 
 
+class _MockPage:
+    """Minimal mock for Playwright page to test _fetch_page_items."""
+
+    def __init__(self, evaluate_results: list):
+        self._eval_results = list(evaluate_results)
+        self._eval_index = 0
+        self.goto_count = 0
+        self.goto_fail_until = 0  # fail goto for the first N calls
+
+    async def goto(self, url, **kwargs):
+        self.goto_count += 1
+        if self.goto_count <= self.goto_fail_until:
+            raise TimeoutError("simulated timeout")
+
+    async def evaluate(self, js):
+        result = self._eval_results[self._eval_index]
+        self._eval_index = min(self._eval_index + 1, len(self._eval_results) - 1)
+        return result
+
+    async def wait_for_load_state(self, state, **kwargs):
+        pass
+
+
+class TestFetchPageItemsBehavior:
+    """Behavioral tests for _fetch_page_items with mock page."""
+
+    @pytest.fixture
+    def crawler(self):
+        return Rent591Crawler()
+
+    @pytest.mark.asyncio
+    async def test_returns_items_on_ok_state(self, crawler):
+        items = [{"id": 1, "title": "test"}]
+        mock = _MockPage(evaluate_results=["ok", items])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=0)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_persistent_anti_bot(self, crawler):
+        """All retries return anti-bot state → should return None."""
+        mock = _MockPage(evaluate_results=["no_nuxt"])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_retries_on_anti_bot_then_succeeds(self, crawler):
+        """First attempt blocked, second attempt succeeds."""
+        items = [{"id": 2, "title": "found"}]
+        # Attempt 1: diagnose → no_store
+        # Attempt 2: diagnose → ok, extract → items
+        mock = _MockPage(evaluate_results=["no_store", "ok", items])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_retries_on_goto_failure(self, crawler):
+        """Page load fails on first try, succeeds on second."""
+        items = [{"id": 3}]
+        mock = _MockPage(evaluate_results=["ok", items])
+        mock.goto_fail_until = 1
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_all_gotos_fail(self, crawler):
+        mock = _MockPage(evaluate_results=["ok", []])
+        mock.goto_fail_until = 999
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cloudflare_waits_and_rechecks(self, crawler):
+        """Cloudflare detected → should wait and re-evaluate state."""
+        items = [{"id": 4}]
+        # Attempt 1: diagnose → cloudflare, re-diagnose after wait → ok, extract → items
+        mock = _MockPage(evaluate_results=["cloudflare", "ok", items])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=0)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_cloudflare_not_resolved_retries(self, crawler):
+        """Cloudflare detected and not resolved → should retry on next attempt."""
+        items = [{"id": 5}]
+        # Attempt 1: cloudflare → re-check → still cloudflare → retry
+        # Attempt 2: ok → items
+        mock = _MockPage(evaluate_results=["cloudflare", "cloudflare", "ok", items])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_null_items_despite_ok_state_retries(self, crawler):
+        """State is OK but items extraction returns None → should retry."""
+        items = [{"id": 6}]
+        # Attempt 1: ok → null items
+        # Attempt 2: ok → real items
+        mock = _MockPage(evaluate_results=["ok", None, "ok", items])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=1)
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_as_valid(self, crawler):
+        """Empty items list [] is a valid return (last page)."""
+        mock = _MockPage(evaluate_results=["ok", []])
+        result = await crawler._fetch_page_items(mock, "http://example.com", max_retries=0)
+        assert result == []
+
+
 class TestRegionMap:
     def test_taipei(self):
         assert REGION_MAP["台北市"] == 1
