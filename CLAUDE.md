@@ -197,10 +197,10 @@ All crawlers inherit from `BaseCrawler` (ABC) and implement `async crawl(**filte
 
 ### Anti-Bot Strategies
 
-- **591**: Uses Playwright to obtain CSRF token from the page, then makes API calls with that token via `page.evaluate(fetch)`. Region is set via cookie.
+- **591**: Nuxt SSR page navigation with anti-bot detection and two-pass crawling. `_DIAGNOSE_PAGE_JS` detects Cloudflare challenges, missing Nuxt data, and empty stores. `_fetch_page_items()` retries with exponential backoff when blocked. Forward pass crawls pages 1→N; if completeness check shows >1% gap vs reported total, a reverse pass (N→1) fills missing listings caused by pagination drift or transient blocks. Proactive random delay (1-3s) between pages reduces anti-bot triggers. Region is set via cookie.
 - **Rakuya**: Uses `playwright-stealth` to bypass Cloudflare Turnstile. Launches with `headless=False` to avoid detection.
 - **fcrent**: Simple Playwright navigation — no significant anti-bot protection. Extracts structured data from Next.js `__NEXT_DATA__` script tag.
-- **Facebook**: Uses saved browser session state (`fb_session/state.json`) with manual login fallback via `ensure_fb_session()`. FB Marketplace crawler is functional. FB Group crawler prototyped but not integrated.
+- **Facebook**: Uses saved browser session state (`fb_session/state.json`) with manual login fallback via `ensure_fb_session()`. FB Marketplace crawler is functional. FB Group crawler crawls all groups in `GROUP_SLUGS` by default (no `--group` needed); single-group crawl logic is in `_crawl_single_group()`, shared browser context across groups.
 
 ### Text Inference Pipeline
 
@@ -295,6 +295,7 @@ tw-rent-radar
 - **Region/city code mappings**: 591 and Rakuya use different numeric codes for the same cities. Each crawler maintains its own `REGION_MAP` / `CITY_CODES` dict. These are hardcoded and may need updating if platforms change their codes.
 - **Windows development environment**: This project is developed on Windows (Git Bash). Use forward slashes in paths. The venv activation is `source .venv/Scripts/activate` (not `bin/activate`).
 - **Geocoding API keys**: TGOS "全國門牌位置比對服務" does NOT allow individual registration (only 政府機關/公司行號). Use **Google Maps Geocoding API** instead — get an API key from Google Cloud Console. Configure in `~/.tw-rent-radar/config.json` (`google_api_key`) or as environment variable (`GOOGLE_MAPS_API_KEY`). Without keys, geocoding is skipped and `--near` search is unavailable.
+- **591 anti-bot and pagination drift**: The 591 crawler uses a two-pass strategy (forward + reverse) to achieve <1% miss rate. Anti-bot signals detected by `_DIAGNOSE_PAGE_JS`: Cloudflare challenge (`challenge-form`, `cf-wrapper`, title "Just a moment..."), missing `__NUXT__` / Pinia store, empty items mid-pagination. `_fetch_page_items()` retries with exponential backoff (2^n + random jitter). Completeness is verified after forward pass by comparing `len(results)` vs store `total`; reverse pass only runs if gap >1%.
 - **591 detail page rate limiting**: Fetching detail pages (`--fetch-details`) is slower — each listing requires a separate page load. Too-fast requests may trigger anti-bot measures that return randomized data.
 - **FB Marketplace data quality**: Kaohsiung "propertyrentals" category returns 100% property sales (prices in millions), zero actual rentals. This is a platform data quality issue, not a code bug.
 - **FB Group crawl approach**: Posts are in `div[dir="auto"]` elements. Must click "查看更多" (See more) buttons to expand truncated text. `[role="article"]` catches some but not all posts. Known accessible groups: "5911高雄租屋" at `/groups/lvmh3/` (public, 14.8萬 members).

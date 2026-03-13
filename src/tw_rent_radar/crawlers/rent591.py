@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import re
 
 from playwright.async_api import async_playwright
@@ -86,6 +88,22 @@ class Rent591Crawler(BaseCrawler):
     const raw = (store.ctx && store.ctx._rawValue) || store.data || store;
     try { return JSON.parse(JSON.stringify({data: raw})); }
     catch(e) { return null; }
+}"""
+
+    # Diagnose page state to detect anti-bot mechanisms.
+    _DIAGNOSE_PAGE_JS = """() => {
+    // Cloudflare challenge indicators
+    if (document.getElementById('challenge-form')
+        || document.getElementById('cf-wrapper')
+        || document.querySelector('[id^="cf-challenge"]')
+        || document.title === 'Just a moment...') {
+        return 'cloudflare';
+    }
+    const n = window.__NUXT__;
+    if (!n) return 'no_nuxt';
+    if (!n.pinia) return 'no_pinia';
+    if (!n.pinia['rent-list']) return 'no_store';
+    return 'ok';
 }"""
 
     def parse_price(self, price_str: str) -> int | None:
@@ -261,8 +279,74 @@ class Rent591Crawler(BaseCrawler):
         return typeof t === 'number' ? t : Number(t) || 0;
     }"""
 
+    async def _fetch_page_items(self, page, url: str, *, max_retries: int = 3) -> list[dict] | None:
+        """Fetch listing items from a page with anti-bot detection and retry.
+
+        Detects Cloudflare challenges, missing Nuxt data, and other anti-bot
+        signals.  Retries with exponential backoff when blocked.
+
+        Returns:
+            list[dict]: Extracted items (may be empty ``[]`` for last page).
+            None: All retries exhausted — anti-bot could not be bypassed.
+        """
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                delay = 2**attempt + random.uniform(0, 2)
+                logger.info(
+                    "Anti-bot retry %d/%d for %s, waiting %.1fs",
+                    attempt,
+                    max_retries,
+                    url,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+            # Navigate
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+            except Exception:  # noqa: BLE001
+                logger.warning("Page load failed for %s (attempt %d)", url, attempt + 1)
+                continue
+
+            # Diagnose page state
+            state = await page.evaluate(self._DIAGNOSE_PAGE_JS)
+
+            if state == "cloudflare":
+                logger.warning("Cloudflare challenge detected on %s", url)
+                try:
+                    await asyncio.sleep(8)
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:  # noqa: BLE001
+                    pass
+                state = await page.evaluate(self._DIAGNOSE_PAGE_JS)
+                if state != "ok":
+                    logger.warning("Cloudflare not resolved, will retry")
+                    continue
+
+            if state != "ok":
+                logger.warning("Anti-bot detected (%s) on %s", state, url)
+                continue
+
+            # State is 'ok' — extract items
+            items = await page.evaluate(_EXTRACT_LISTINGS_JS)
+
+            if items is None:
+                logger.warning("Null items despite OK page state on %s", url)
+                continue
+
+            return items
+
+        logger.error("Failed to fetch %s after %d retries", url, max_retries)
+        return None
+
     async def crawl(self, **filters) -> list[dict]:
-        """Crawl 591 listings by navigating the Nuxt SSR list pages.
+        """Crawl 591 listings with anti-bot bypass and completeness verification.
+
+        Two-pass strategy:
+        1. **Forward pass**: crawl page 1 → N, collecting listings.
+        2. **Completeness check**: compare collected count vs reported total.
+        3. **Reverse pass** (if gap > 1%): crawl page N → 1 to catch items
+           missed due to pagination drift or transient anti-bot blocks.
 
         Keyword arguments:
             city: str -- City name in Chinese (default: "台北市")
@@ -278,6 +362,8 @@ class Rent591Crawler(BaseCrawler):
 
         per_page = 30  # 591 returns 30 items per page
         results: list[dict] = []
+        seen_ids: set[str] = set()
+        expected_total = 0
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -298,9 +384,9 @@ class Rent591Crawler(BaseCrawler):
             page = await context.new_page()
             total_pages = max_pages or 999  # will be refined after first page
 
+            # ---- Forward pass ----
             page_num = 0
             consecutive_failures = 0
-            max_consecutive_failures = 3
             while page_num < total_pages:
                 page_num += 1
                 list_url = f"{self.list_base_url}?region={region_id}"
@@ -309,18 +395,17 @@ class Rent591Crawler(BaseCrawler):
 
                 logger.info("Fetching page %d/%s: %s", page_num, total_pages, list_url)
 
-                try:
-                    await page.goto(list_url, wait_until="networkidle", timeout=30000)
-                except Exception:  # noqa: BLE001
+                # Proactive delay between pages to avoid triggering anti-bot
+                if page_num > 1:
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+
+                items = await self._fetch_page_items(page, list_url)
+
+                if items is None:
+                    # Anti-bot not bypassed — skip this page
                     consecutive_failures += 1
-                    logger.warning(
-                        "Page load failed for page %d (%d/%d consecutive failures)",
-                        page_num,
-                        consecutive_failures,
-                        max_consecutive_failures,
-                    )
-                    if consecutive_failures >= max_consecutive_failures:
-                        logger.error("Too many consecutive failures, stopping crawl")
+                    if consecutive_failures >= 3:
+                        logger.error("Too many consecutive failures, stopping forward pass")
                         break
                     continue
 
@@ -331,22 +416,110 @@ class Rent591Crawler(BaseCrawler):
                     total = await page.evaluate(self._EXTRACT_TOTAL_JS)
                     if total and total > 0:
                         total_pages = (total + per_page - 1) // per_page
+                        expected_total = total
                         logger.info("Total listings: %d (%d pages)", total, total_pages)
 
-                # Extract listing data from the Nuxt SSR payload
-                items = await page.evaluate(_EXTRACT_LISTINGS_JS)
-
                 if not items:
+                    # Empty items — check if this is mid-pagination (suspicious)
+                    if page_num < total_pages:
+                        current_total = await page.evaluate(self._EXTRACT_TOTAL_JS)
+                        if current_total and current_total > len(results):
+                            logger.warning(
+                                "Empty items on page %d but total=%d > crawled=%d, "
+                                "possible anti-bot — skipping page",
+                                page_num,
+                                current_total,
+                                len(results),
+                            )
+                            continue
                     logger.info("No more items found on page %d", page_num)
                     break
 
                 for item in items:
                     parsed = self.parse_list_item(item, city)
-                    results.append(parsed)
+                    if parsed["source_id"] not in seen_ids:
+                        seen_ids.add(parsed["source_id"])
+                        results.append(parsed)
 
-                logger.info("Parsed %d items from page %d", len(items), page_num)
+                logger.info(
+                    "Parsed %d items from page %d (total: %d)", len(items), page_num, len(results)
+                )
 
-            # Crawl detail pages for additional fields
+            # ---- Completeness check + reverse pass ----
+            if expected_total > 0 and max_pages == 0:
+                gap = expected_total - len(results)
+                gap_pct = gap / expected_total * 100
+                logger.info(
+                    "Completeness: %d/%d (%.1f%% gap, %d missing)",
+                    len(results),
+                    expected_total,
+                    gap_pct,
+                    gap,
+                )
+
+                if gap_pct > 1.0:
+                    logger.info("Gap > 1%%, starting reverse pass to fill %d missing listings", gap)
+                    consecutive_failures = 0
+                    for rev_page in range(total_pages, 0, -1):
+                        list_url = f"{self.list_base_url}?region={region_id}"
+                        if rev_page > 1:
+                            list_url += f"&page={rev_page}"
+
+                        logger.info("[reverse] Fetching page %d/%d", rev_page, total_pages)
+                        await asyncio.sleep(random.uniform(1.0, 3.0))
+
+                        items = await self._fetch_page_items(page, list_url)
+
+                        if items is None:
+                            consecutive_failures += 1
+                            if consecutive_failures >= 3:
+                                logger.error("Too many consecutive failures, stopping reverse pass")
+                                break
+                            continue
+
+                        consecutive_failures = 0
+                        if not items:
+                            continue
+
+                        new_count = 0
+                        for item in items:
+                            parsed = self.parse_list_item(item, city)
+                            if parsed["source_id"] not in seen_ids:
+                                seen_ids.add(parsed["source_id"])
+                                results.append(parsed)
+                                new_count += 1
+
+                        if new_count:
+                            logger.info(
+                                "[reverse] Found %d new items on page %d", new_count, rev_page
+                            )
+
+                        # Stop once gap is acceptable
+                        remaining_gap = expected_total - len(results)
+                        if remaining_gap <= 0 or remaining_gap / expected_total * 100 <= 1.0:
+                            logger.info(
+                                "Gap now <= 1%% (%d/%d), stopping reverse pass",
+                                len(results),
+                                expected_total,
+                            )
+                            break
+
+                    final_gap = expected_total - len(results)
+                    final_pct = final_gap / expected_total * 100 if expected_total else 0
+                    logger.info(
+                        "After reverse pass: %d/%d (%.1f%% gap)",
+                        len(results),
+                        expected_total,
+                        final_pct,
+                    )
+                    if final_pct > 1.0:
+                        logger.warning(
+                            "Still missing %.1f%% (%d listings) after both passes",
+                            final_pct,
+                            final_gap,
+                        )
+
+            # ---- Detail pages ----
             if fetch_details:
                 for listing in results:
                     url = listing.get("url")

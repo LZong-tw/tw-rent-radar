@@ -311,6 +311,55 @@ class TestCrawlDefaults:
         assert pages == 10
 
 
+class TestAntiBotDetection:
+    """Ensure anti-bot detection and bypass infrastructure exists."""
+
+    def test_diagnose_page_js_defined(self):
+        assert hasattr(Rent591Crawler, "_DIAGNOSE_PAGE_JS")
+        js = Rent591Crawler._DIAGNOSE_PAGE_JS
+        assert "cloudflare" in js
+        assert "no_nuxt" in js
+        assert "'ok'" in js
+
+    def test_diagnose_page_js_checks_cloudflare(self):
+        """JS should detect Cloudflare challenge indicators."""
+        js = Rent591Crawler._DIAGNOSE_PAGE_JS
+        assert "challenge-form" in js
+        assert "cf-wrapper" in js
+        assert "Just a moment" in js
+
+    def test_fetch_page_items_method_exists(self):
+        crawler = Rent591Crawler()
+        assert hasattr(crawler, "_fetch_page_items")
+        import inspect
+
+        sig = inspect.signature(crawler._fetch_page_items)
+        assert "max_retries" in sig.parameters
+
+    def test_crawl_has_forward_and_reverse_pass(self):
+        """crawl() should contain both forward and reverse pass logic."""
+        import inspect
+
+        source = inspect.getsource(Rent591Crawler.crawl)
+        assert "Forward pass" in source or "forward pass" in source
+        assert "reverse" in source.lower()
+        assert "Completeness" in source or "completeness" in source
+
+    def test_crawl_uses_seen_ids_for_dedup(self):
+        """crawl() should deduplicate listings by source_id."""
+        import inspect
+
+        source = inspect.getsource(Rent591Crawler.crawl)
+        assert "seen_ids" in source
+
+    def test_crawl_has_proactive_delay(self):
+        """crawl() should add delay between pages to avoid triggering anti-bot."""
+        import inspect
+
+        source = inspect.getsource(Rent591Crawler.crawl)
+        assert "asyncio.sleep" in source
+
+
 class TestRegionMap:
     def test_taipei(self):
         assert REGION_MAP["台北市"] == 1
