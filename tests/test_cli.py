@@ -140,6 +140,28 @@ def test_crawl_geocodes_listings(runner, empty_db, monkeypatch):
         mock_geo.assert_called_once()
 
 
+def test_all_db_options_default_to_default_db():
+    """Every command's hidden --db option defaults to DEFAULT_DB, never None."""
+    import click
+
+    from tw_rent_radar.cli import DEFAULT_DB
+
+    def walk(cmd, path):
+        if isinstance(cmd, click.Group):
+            for name, sub in cmd.commands.items():
+                yield from walk(sub, f"{path} {name}")
+        else:
+            yield path, cmd
+
+    checked = 0
+    for path, cmd in walk(cli, "tw-rent-radar"):
+        for param in cmd.params:
+            if param.name == "db_path":
+                assert param.default == DEFAULT_DB, path
+                checked += 1
+    assert checked >= 6
+
+
 def test_search_cooking_filter(runner, empty_db):
     """search --cooking filters by cooking policy."""
     from tw_rent_radar.db import Session, get_engine, upsert_listing

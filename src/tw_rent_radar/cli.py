@@ -63,7 +63,7 @@ def geocode_listing(session: Session, listing_id: int) -> None:
         session.commit()
 
 
-def run_crawler(source: str, db_path: str | None, **filters) -> int:
+def run_crawler(source: str, db_path: str, **filters) -> int:
     """Dispatch to crawler class, crawl, and upsert results into the DB."""
     crawler_cls = CRAWLER_MAP.get(source)
     if crawler_cls is None:
@@ -103,7 +103,7 @@ def cli():
 @click.option("--city", help="縣市，例如 高雄市")
 @click.option("--group", help="Facebook 社團名稱")
 @click.option("--fetch-details", is_flag=True, help="爬取詳情頁（較慢，但取得更多資訊）")
-@click.option("--db", "db_path", default=None, hidden=True)
+@click.option("--db", "db_path", default=DEFAULT_DB, hidden=True)
 def crawl(source, city, group, fetch_details, db_path):
     """爬取租屋資料"""
     filters = {}
@@ -270,7 +270,7 @@ def search(
                 d["distance_km"] = list(distances.values())[0]
             else:
                 for i, (name, dist) in enumerate(distances.items()):
-                    d[f"dist_{i+1}"] = dist
+                    d[f"dist_{i + 1}"] = dist
                 d["distance_km"] = min(distances.values())
 
             filtered.append(d)
