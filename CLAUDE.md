@@ -31,18 +31,19 @@ tw-rent-radar/
   .github/workflows/ci.yml          # CI: lint, format, test, e2e (manual)
   src/tw_rent_radar/
     __init__.py
-    cli.py                          # Click CLI: crawl, search, show, stats, list, db commands
+    cli.py                          # Click CLI: crawl, search, show, stats, analyze, list, db commands
     db.py                           # SQLAlchemy ORM: Listing model, upsert_listing, get_engine
     output.py                       # Rich table + JSON formatting
+    analysis.py                     # analyze command: nearest MRT, quality flags, cross-platform dedup, xlsx export
     geo.py                          # TGOS + Google Maps geocoding, Haversine distance
     crawlers/
       __init__.py                   # Re-exports all crawler classes
       base.py                       # BaseCrawler ABC + text inference (infer_cooking, infer_gas, enrich_listing)
-      rent591.py                    # 591 crawler: Playwright + CSRF token + API pagination
+      rent591.py                    # 591 crawler: Playwright + Nuxt SSR store, two-pass pagination
       rakuya.py                     # Rakuya crawler: Playwright + stealth + HTML parsing
       fcrent.py                     # fcrent crawler: Playwright + __NEXT_DATA__ JSON extraction
       fb_auth.py                    # Facebook session management (manual login, state persistence)
-      fb_group.py                   # Facebook Group crawler (skeleton — crawl logic not yet integrated)
+      fb_group.py                   # Facebook Group crawler (GraphQL post-ID interception + DOM text, all GROUP_SLUGS)
       fb_market.py                  # Facebook Marketplace crawler (fully implemented)
   tests/
     test_crawlers_base.py           # BaseCrawler ABC + text inference (infer_cooking, infer_gas, enrich_listing)
@@ -53,6 +54,7 @@ tw-rent-radar/
     test_db.py                      # SQLite create/insert/upsert deduplication
     test_cli.py                     # CLI smoke tests (help, search, stats, list sources)
     test_output.py                  # JSON + Rich table formatting
+    test_geo.py                     # Haversine distance, TGOS/Google geocode parsing and fallback
     test_integration.py             # Full workflow: insert data -> search via CLI -> verify
     test_e2e.py                     # E2E tests against live websites (marked with @pytest.mark.e2e)
   docs/plans/                       # Design and implementation plan documents
@@ -189,7 +191,7 @@ All crawlers inherit from `BaseCrawler` (ABC) and implement `async crawl(**filte
 
 | Crawler          | Platform         | Strategy                                           | Status |
 |----------------- |----------------- |--------------------------------------------------- |--------|
-| `Rent591Crawler` | 591 租屋網       | Playwright + CSRF token + XHR API calls, paginated | Done   |
+| `Rent591Crawler` | 591 租屋網       | Playwright + Nuxt SSR store, two-pass paginated    | Done   |
 | `RakuyaCrawler`  | 樂屋網           | Playwright + stealth, two-phase crawl (cards then detail pages) | Done |
 | `FcrentCrawler`  | 方齊物業         | Playwright + `__NEXT_DATA__` JSON from Next.js SSR | Done   |
 | `FbGroupCrawler` | Facebook 社團    | Playwright + GraphQL interception for post IDs, DOM text extraction | Done |
@@ -230,6 +232,7 @@ tw-rent-radar
   ├── search                # Query with filters (see below)
   ├── show <id>             # Display single listing details
   ├── stats                 # Show listing counts by source
+  ├── analyze               # Enriched xlsx report (--city, --max-price, --cooking, --near, --within, --output)
   ├── list sources          # List supported platforms
   └── db reset              # Delete all stored data
 ```
@@ -284,7 +287,6 @@ tw-rent-radar
 
 ## Known Pitfalls
 
-- **591 CSRF token**: The 591 API requires a CSRF token from a `<meta name="csrf-token">` tag. The token must be sent as `X-CSRF-TOKEN` header. Without it, the API returns HTML instead of JSON.
 - **Rakuya Cloudflare protection**: Rakuya uses Cloudflare Turnstile. Must use `playwright-stealth` and launch with `headless=False`. The `stealth_async` function (or `Stealth().apply_stealth_async()` in newer versions) must be applied to the page before navigation.
 - **fcrent __NEXT_DATA__**: fcrent.tw is a Next.js SSR site. Listing data is embedded in a `<script id="__NEXT_DATA__">` tag as JSON. The object uses opaque IDs for city, district, type, layout, facilities — these must be resolved using lookup tables in `pageProps`.
 - **Facebook session**: Facebook crawlers require manual login. The session state is saved to `fb_session/state.json` and reused. If the session expires, the user is prompted to log in again via a visible browser window.
@@ -306,6 +308,7 @@ tw-rent-radar
 - **591 pagination coverage**: 591 has ~6500 listings per city (e.g. Kaohsiung = 217 pages × 30/page). The crawler defaults to `max_pages=0` which auto-detects total from the Nuxt store's `total` field and crawls all pages. Never hardcode a small page limit — it silently drops most listings.
 - **Vue reactive proxy serialization**: Nuxt Pinia store fields (e.g. `total`) may be Vue reactive proxies. Returning them directly from `page.evaluate()` causes "Cannot serialize result: object reference chain is too long". Always coerce to primitive with `Number(t)` or `typeof t === 'number' ? t : Number(t) || 0` before returning.
 - **FB Group permalinks not in DOM**: Facebook's modern UI does NOT render permalink `<a>` tags for group posts. Must intercept GraphQL API responses during scrolling to extract `post_id`, then match with DOM-extracted text by similarity. See `_extract_post_ids_from_graphql()` and `_match_permalinks()` in `fb_group.py`.
+- **analyze MRT data is Kaohsiung-only**: `MRT_STATIONS` in `analysis.py` lists only Kaohsiung MRT stations, and `nearest_mrt()` is called regardless of `--city`. For any other city the `nearest_mrt` column names a Kaohsiung station with a meaningless distance. Add that city's stations (keyed by city) before relying on the column elsewhere.
 
 ## Writing Style
 
